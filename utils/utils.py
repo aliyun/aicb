@@ -354,9 +354,10 @@ def get_params():
     assert (
         args.world_size % (args.tp_num * args.pp_num) == 0
     ), f"world size: {args.world_size}, tp: {args.tp_num}, pp: {args.pp_num}"
-    assert (
-        args.moe_enabled and args.enable_sequence_parallel
-    ), f"moe must be enabled with sequence parallel"
+    if args.moe_enabled:
+        assert (
+            args.moe_enabled and args.enable_sequence_parallel
+        ), f"moe must be enabled with sequence parallel"
     args.dp_num = args.world_size // (args.tp_num * args.pp_num)
     # assert args.global_batch % (args.dp_num * args.micro_batch) == 0, \
     #     f"global_batch: {args.global_batch}, dp: {args.dp_num}, micro_batch: {args.micro_batch}"
