@@ -66,7 +66,7 @@ You can follow the instrucitons below to quickly set up the environtments and ru
     docker pull nvcr.io/nvidia/pytorch:xx.xx-py3
     docker run --gpus all -it --rm -v /path/to/AICBench:/workspace/AICBench nvcr.io/nvidia/pytorch:xx.xx-py3
     dpkg -i /download/AICB_v1.0.deb 
-    sh megatron_workload_with_aiob.sh -m 7
+    sh scripts/megatron_workload_with_aiob.sh -m 7
     ```
 
 3. Composing a Docker image from Dockfile
@@ -114,7 +114,7 @@ sh scripts/megatron_gpt.sh \
 For `Moe` , you can quickly start it using the [scripts/megatron_gpt.sh](scripts/megatron_gpt.sh) script file.
 ```bash
 sh scripts/megatron_gpt.sh \
--m moe --world_size 8 --tp_num 2 --pp_num 1 
+-m moe --world_size 8 --tp_num 2 --pp_num 1 \
 --moe_enabled --expert_parallel_size 1  \
 --comm_frame Megatron --global_batch 16  \
 --num_moe_experts 2 --moe_router_topk 2 \
