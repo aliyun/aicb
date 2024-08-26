@@ -10,8 +10,8 @@ model_size=13
 num_layers=40
 num_attention_heads=40
 hidden_size=5120
-seq_len=2048
-# micro_batch=2
+seq_length=2048
+micro_batch=2
 epoch_num=1
 tp_num=8
 pp_num=1
@@ -20,7 +20,7 @@ model_name=gpt_13b
 global_batch=1024
 sp_enable=
 comm_frame=Megatron
-aiob_enable=1
+aiob_enable=
 max_position_embeddings=4096
 
 
@@ -150,7 +150,7 @@ esac
 
 script="./aicb.py"
 which numarun
-if [[ $? -eq 0 ]]; then
+if [ $? -eq 0 ]; then
     script="--no-python numarun python ./aicb.py"
 fi
 
