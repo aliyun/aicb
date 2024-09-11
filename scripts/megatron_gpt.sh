@@ -10,27 +10,28 @@ model_size=13
 num_layers=40
 num_attention_heads=40
 hidden_size=5120
-seq_len=2048
-# micro_batch=2
+seq_length=2048
+micro_batch=1
 epoch_num=1
-tp_num=8
-pp_num=1
+tensor_model_parallel_size=8
+pipeline_model_parallel=1
 vocab_size=50257
 model_name=gpt_13b
-global_batch=1024
+ga_num=2
 sp_enable=
-comm_frame=Megatron
-aiob_enable=1
+frame=Megatron
+aiob_enable=
 max_position_embeddings=4096
-
-
+num_experts=1
+moe_enable=
+enable_visual=
 usage() {
   echo "Usage: \$0 [options]
     options:
-      --comm_frame              Communication framework: $comm_frame
+      --frame              Communication framework: $frame
       --world_size              World size (number of nodes): $WORLD_SIZE
-      --tp_num                  Tensor parallelism size: $tp_num
-      --pp_num                  Pipeline parallelism size: $pp_num
+      --tensor_model_parallel_size                  Tensor parallelism size: $tensor_model_parallel_size
+      --pipeline_model_parallel                  Pipeline parallelism size: $pipeline_model_parallel
       --global_batch            Global batch size: $global_batch
       --micro_batch             Micro batch size: $micro_batch
       --num_layers              Number of layers: $num_layers
@@ -39,6 +40,7 @@ usage() {
       --epoch_num               Number of epochs: $epoch_num
       --num_attention_heads     Number of attention heads: $num_attention_heads
       --aiob_enable             Enable AIOB: $aiob_enable
+      --enable_visual           Enable Visualization $enable_visual 
       --use_flash_attn          Use flash attention: $use_flash_attn
       --swiglu                  Use SWIGLU: $swiglu
       --ffn_hidden_size         FFN hidden size: $ffn_hidden_size
@@ -51,19 +53,25 @@ usage() {
       --nproc_per_node          Number of GPUs per node: $NUM_GPUS
       --master_addr             Master address: $MASTER_ADDR
       --master_port             Master port: $MASTER_PORT
+      --me_enable                enable moe
+      --moe_router_topk         Number of experts to route to for each token.
+      --expert_model_parallel_size     Degree of expert model parallelism
+      --num_experts          Number of experts in the MoE model.  
+      --moe_grouped_gemm        apply grouped gemm
       -h, --help                Display this help and exit"1>&2; exit 1;
 }
 while [ $# -gt 0 ]
 do
+echo "Processing argument: $1"
   case $1 in
-    --comm_frame)
-      comm_frame=$2; shift;;
+    --frame)
+      frame=$2; shift;;
     --world_size)
       world_size=$2; shift;;
-    --tp_num)
-      tp_num=$2; shift;;
-    --pp_num)
-      pp_num=$2; shift;;
+    --tensor_model_parallel_size|tp_num)
+      tensor_model_parallel_size=$2; shift;;
+    --pipeline_model_parallel|pp_num)
+      pipeline_model_parallel=$2; shift;;
     --global_batch)
       global_batch=$2; shift;;
     --micro_batch)
@@ -80,18 +88,30 @@ do
       num_attention_heads=$2; shift;;
     --aiob_enable)
       aiob_enable=--aiob_enable;;
+    --enable_visual)
+      enable_visual=--enable_visual;;
     --use_flash_attn)
       use_flash_attn=--use_flash_attn;;
     --swiglu)
       swiglu=--swiglu;;
     --ffn_hidden_size)
       ffn_hidden_size=$2; shift;;
-    --sp|--sp-enable)
+    --sp|--sp-enable|--enable_sequence_parallel)
       sp_enable=--enable_sequence_parallel;;
     --comp_filepath)
       comp_filepath=$2; shift;;
     -m|--model_size)
       model_size=$2; shift;;
+    --moe_enable)
+      moe_enable=--moe_enable;;
+    --moe_router_topk|--topk)
+      moe_router_topk=$2; shift;;
+    --num_experts|--experts)
+      num_experts=$2; shift;;
+    --expert_model_parallel_size|--ep)
+      expert_model_parallel_size=$2; shift;;
+    --grouped_gemm|--moe_grouped_gemm)
+      grouped_gemm=--moe_grouped_gemm;;
     --nnodes)
       WORLD_SIZE=$2;shift;;
     --node_rank)
@@ -117,14 +137,14 @@ case $model_size in
     num_layers=96
     hidden_size=12288
     num_attention_heads=96
-    tp_num=8
+    tensor_model_parallel_size=8
     ;;
   22)
     model_name=gpt_22B
     num_layers=48
     hidden_size=6144
     num_attention_heads=64
-    tp_num=8
+    tensor_model_parallel_size=8
     ;;
   13)
     model_name=gpt_13B
@@ -137,10 +157,19 @@ case $model_size in
     num_layers=36
     hidden_size=4096
     num_attention_heads=32
-    tp_num=4
+    ;;
+  moe)
+    model_name=Mixtral_8*7B
+    num_layers=32
+    hidden_size=4096
+    num_attention_heads=32
+    ffn_hidden_size=14336
+    tensor_model_parallel_size=2
+    moe_enable=--moe_enable
+    grouped_gemm=--moe_grouped_gemm
     ;;
   (*)
-    echo "Only support model size 175, 22,13 or 7; using default size 13"
+    echo "Only support model size 175,22,13,7 or moe; using default size 13"
     model_name=gpt_13B
     num_layers=40
     hidden_size=5120
@@ -148,17 +177,15 @@ case $model_size in
     ;;
 esac
 
+dp_num=$((WORLD_SIZE*8/tensor_model_parallel_size/pipeline_model_parallel))
+global_batch=$((ga_num*dp_num*micro_batch))
 script="./aicb.py"
-which numarun
-if [[ $? -eq 0 ]]; then
-    script="--no-python numarun python ./aicb.py"
-fi
 
 cmd="$script \
-  --comm_frame=$comm_frame \
+  --frame=$frame \
   --model_name=$model_name \
   --world_size=$(($WORLD_SIZE * $NUM_GPUS)) \
-  --tp_num=$tp_num \
+  --tensor_model_parallel_size=$tensor_model_parallel_size \
   --micro_batch=$micro_batch \
   --global_batch=$global_batch \
   --epoch_num=$epoch_num \
@@ -167,15 +194,21 @@ cmd="$script \
   --num_attention_heads=$num_attention_heads \
   --seq_length=$seq_length \
   --vocab_size=$vocab_size \
-  --pp_num=$pp_num \
+  --pipeline_model_parallel=$pipeline_model_parallel \
   --use-distributed-optimizer \
   --max_position_embeddings=$max_position_embeddings \
   ${aiob_enable} \
+  ${enable_visual} \
   ${sp_enable} \
   ${use_flash_attn} \
   ${swiglu} \
   ${ffn_hidden_size:+--ffn_hidden_size=$ffn_hidden_size} \
-  ${comp_filepath:+--comp_filepath=$comp_filepath}"
+  ${comp_filepath:+--comp_filepath=$comp_filepath} \
+  ${moe_enable} \
+  ${moe_router_topk:+--moe_router_topk=$moe_router_topk} \
+  ${num_experts:+--num_experts=$num_experts} \
+  ${expert_model_parallel_size:+--expert_model_parallel_size=$expert_model_parallel_size} \
+  ${grouped_gemm}"
 echo $cmd
 
 

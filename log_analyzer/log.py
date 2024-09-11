@@ -13,6 +13,7 @@ limitations under the License.
 
 import os
 import pickle
+import csv
 import dataclasses
 import numpy as np
 from typing import Union, Dict, List
@@ -45,7 +46,7 @@ class LogItem:
     def elapsed_time(self, elapsed_time):
         self._elapsed_time = elapsed_time
         self.algbw, self.busbw = calc_bw_log(
-            self.comm_type, self.msg_size, elapsed_time
+            self.comm_type, self.msg_size, elapsed_time, self.comm_group_size
         )
 
     def is_epoch_end(self):
@@ -57,9 +58,14 @@ class LogItem:
     def view_as_ds_log(self):
         log_str = f"[RANK 0] comm op: {self.comm_type} | comm group: {self.comm_group}"
         log_str += " | time (ms): {:.2f}".format(self.elapsed_time)
-        log_str += " | msg size: " + convert_size_to_msg(self.msg_size)
-        log_str += " | algbw (Gbps): {:.2f} ".format(self.algbw)
-        log_str += " | busbw (Gbps): {:.2f} ".format(self.busbw)
+        if self.comm_type == CommType.computation or self.additional == 'overlap':
+            log_str += " | msg size: " + '0'
+            log_str += " | algbw (GB): " + '0'
+            log_str += " | busbw (GB): " + '0'
+        else:
+            log_str += " | msg size: " + convert_size_to_msg(self.msg_size)
+            log_str += " | algbw (GB): {:.2f} ".format(self.algbw)
+            log_str += " | busbw (GB): {:.2f} ".format(self.busbw)
         return log_str
 
     def csv_header(self):
@@ -131,20 +137,21 @@ def _analyze_stage_log(comm_log: List[Dict], stage: str, comm_info: Dict[str, Di
     # key: comm_type, msg_size, value: count, time_ms
     detailed_comm_type_info = comm_info[stage]["detailed_comm_type_info"]
     for log in comm_log:
-        __update_info(
-            comm_type_info,
-            log.__dict__,
-            ["comm_type", "comm_group"],
-            ["count", "msg_size"],
-            ["_elapsed_time"],
-        )
-        __update_info(
-            detailed_comm_type_info,
-            log.__dict__,
-            ["comm_type", "comm_group", "msg_size"],
-            ["count"],
-            ["_elapsed_time"],
-        )
+        if log.comm_type != CommType.computation:
+            __update_info(
+                comm_type_info,
+                log.__dict__,
+                ["comm_type", "comm_group"],
+                ["count", "msg_size"],
+                ["_elapsed_time"],
+            )
+            __update_info(
+                detailed_comm_type_info,
+                log.__dict__,
+                ["comm_type", "comm_group", "msg_size"],
+                ["count"],
+                ["_elapsed_time"],
+            )
 
 
 class Log:
@@ -214,8 +221,7 @@ class Log:
             f.write(self.comm_logs[0].csv_header() + "\n")
             for log_item in self.comm_logs:
                 f.write(log_item.view_as_csv_line() + "\n")
-        pkl_filename = filename + "_log.pkl"
-        pickle.dump(self, open(pkl_filename, "wb"))
+        return csv_filename
 
     @staticmethod
     def load(filename):
@@ -283,7 +289,7 @@ class Workload:
     def extend(self, new_workload):
         self.workload.extend(new_workload.workload)
 
-    def dump(self, args, filename):
+    def dump(self, filename):
         folder_path = os.path.dirname(filename)
         if folder_path and not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -293,14 +299,12 @@ class Workload:
         if "." in filename:
             filename = os.path.basename(filename).split(".")[0]
         filename = os.path.join("results/mocked_workload/", filename)
-        pkl_filename = filename + "_workload.pkl"
-        pickle.dump((self, args), open(pkl_filename, "wb"))
         csv_filename = filename + "_workload.csv"
         with open(csv_filename, "w") as f:
             f.write(self.workload[0].csv_header() + "\n")
             for log_item in self.workload:
                 f.write(log_item.view_as_csv_line() + "\n")
-
+        
     @staticmethod
     def load(filename):
         filename = filename.split(".")

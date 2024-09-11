@@ -1,7 +1,11 @@
 #!/bin/sh
 
-set -x
 
+set -x
+: ${WORLD_SIZE:=1}
+: ${RANK:=0}
+: ${MASTER_ADDR:="localhost"}
+: ${MASTER_PORT:=29500}
 model_name=llama_7b
 zero_stage=3
 model_size=7
@@ -18,6 +22,8 @@ param_persistence_threshold=100000
 seq_len=2048
 batch_size=4
 contiguous_gradients=
+aiob_enable=
+enable_visual=
 
 usage() {
   echo "Usage: $0 [options]
@@ -26,6 +32,7 @@ usage() {
       --zero_stage              zero_stage: $zero_stage
       --epoch_num               num of iterations: $epoch_num
       --batch_size              micro batch_size: $batch_size
+      --enable_visual           enable visual html output files
       -m, --model-size          llama model size.(7/13/30/65): $model_size
       --reduce-bucket-size      size of reduce bucket: $reduce_bucket_size
       --allgather-bucket-size   size of all_gather bucket(only used in stage1,2): $reduce_bucket_size
@@ -39,6 +46,7 @@ usage() {
 
 while [ $# -gt 0 ]
 do
+echo "Processing argument: $1"
   case $1 in
     --model_name|--model-name)
       model_name=$2 ; shift;;
@@ -60,6 +68,10 @@ do
       allgather_bucket_size=$2 ; shift;;
     --seq-len|--seq_len)
       seq_len=$2 ; shift;;
+    --aiob_enable)
+      aiob_enable=--aiob_enable;;
+    --enable_visual)
+      enable_visual=--enable_visual;;
     --contiguous-gradients|--contiguous_gradients)
       contiguous_gradients=--contiguous_gradients; shift;;
     -h|--help)
@@ -85,10 +97,6 @@ case $model_size in
 esac
 
 script="./aicb.py"
-which numarun
-if [[ $? -eq 0 ]]; then
-    script="--no-python numarun python ./aicb.py"
-fi
 
 torchrun \
 --nnodes ${WORLD_SIZE} \
@@ -96,8 +104,8 @@ torchrun \
 --nproc_per_node gpu \
 --master_addr $MASTER_ADDR \
 --master_port $MASTER_PORT \
-$script --comm_frame=DeepSpeed --model_name=$model_name --stage=$zero_stage --world_size=$((WORLD_SIZE*8)) \
-  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size)) --epoch_num=$epoch_num \
+$script --frame=DeepSpeed --model_name=$model_name --stage=$zero_stage --world_size=$((WORLD_SIZE*8)) \
+  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size))  --epoch_num=$epoch_num \
   --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
   --reduce_bucket_size=$reduce_bucket_size --allgather_bucket_size=$allgather_bucket_size --seq_len=$seq_len \
-  --max_live_parameters=$max_live_parameters --param_persistence_threshold=$param_persistence_threshold $contiguous_gradients
+  --max_live_parameters=$max_live_parameters --param_persistence_threshold=$param_persistence_threshold $contiguous_gradients $aiob_enable $enable_visual

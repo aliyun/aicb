@@ -28,7 +28,7 @@ class MegatronRowLinear(MockedModel):
         layer_id,
         prefix_name,
         sequence_parallel_enabled=True,
-        computation_enable=0,
+        computation_enable=False,
         name=None,
         add_bias_linear=False,
     ):
@@ -43,7 +43,7 @@ class MegatronRowLinear(MockedModel):
             self.bias = MockedParam((output_size, 1), name=self.name + "_bias")
         self.sequence_parallel_enabled = sequence_parallel_enabled
         self.computation_enable = computation_enable
-        self.tp_num, self.seq_len, self.batch_size = tp, seq_len, batch_size
+        self.tensor_model_parallel_size, self.seq_len, self.batch_size = tp, seq_len, batch_size
         self.comm_size = 2 * seq_len * batch_size * output_size
 
     def forward(self):
@@ -60,14 +60,14 @@ class MegatronRowLinear(MockedModel):
                     stage="forward.MegatronRowLinear." + self.name,
                 )
             )
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if self.sequence_parallel_enabled:
                 # output_ = reduce_scatter_to_sequence_parallel_region(output_parallel): (s/tp, b, h)
                 workloads.append(
                     LogItem(
                         comm_type=CommType.reduce_scatter,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="forward.MegatronRowLinear",
                     )
@@ -78,7 +78,7 @@ class MegatronRowLinear(MockedModel):
                     LogItem(
                         comm_type=CommType.all_reduce,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="forward.MegatronRowLinear",
                     )
@@ -87,14 +87,14 @@ class MegatronRowLinear(MockedModel):
 
     def backward(self):
         workloads = Workload()
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if self.sequence_parallel_enabled:
                 # output_ = reduce_scatter_to_sequence_parallel_region(output_parallel): (s/tp, b, h)
                 workloads.append(
                     LogItem(
                         comm_type=CommType.all_gather,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="backward.MegatronRowLinear",
                     )
@@ -136,7 +136,7 @@ class MegatronColumnLinear(MockedModel):
         layer_id,
         prefix_name,
         sequence_parallel_enabled=True,
-        computation_enable=0,
+        computation_enable=False,
         name=None,
         add_bias_linear=False,
     ):
@@ -145,7 +145,7 @@ class MegatronColumnLinear(MockedModel):
         self.input_size, self.output_size = input_size, output_size
         self.output_size_per_partition = divide(output_size, tp)
         self.weight = MockedParam(
-            (self.output_size_per_partition, input_size), name=name
+            (input_size , self.output_size_per_partition), name=name
         )
         if add_bias_linear:
             self.bias = MockedParam(
@@ -153,20 +153,20 @@ class MegatronColumnLinear(MockedModel):
             )
         self.sequence_parallel_enabled = sequence_parallel_enabled
         self.computation_enable = computation_enable
-        self.tp_num, self.seq_len, self.batch_size = tp, seq_len, batch_size
+        self.tensor_model_parallel_size, self.seq_len, self.batch_size = tp, seq_len, batch_size
         self.comm_size = 2 * seq_len * batch_size * input_size
-        if self.tp_num > 1 and self.sequence_parallel_enabled:
-            self.seq_len *= self.tp_num
+        if self.tensor_model_parallel_size > 1 and self.sequence_parallel_enabled:
+            self.seq_len *= self.tensor_model_parallel_size
 
     def forward(self):
         workloads = Workload()
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if self.sequence_parallel_enabled:
                 workloads.append(
                     LogItem(
                         comm_type=CommType.all_gather,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="forward.MegatronColumnLinear",
                     )
@@ -187,13 +187,13 @@ class MegatronColumnLinear(MockedModel):
 
     def backward(self):
         workloads = Workload()
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if self.sequence_parallel_enabled:
                 workloads.append(
                     LogItem(
                         comm_type=CommType.all_gather,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="backward.MegatronColumnLinear",
                     )
@@ -211,13 +211,13 @@ class MegatronColumnLinear(MockedModel):
                     stage="backward.MegatronColumnLinear." + self.name,
                 )
             )
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if self.sequence_parallel_enabled:
                 workloads.append(
                     LogItem(
                         comm_type=CommType.reduce_scatter,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="backward.MegatronColumnLinear",
                     )
@@ -236,13 +236,13 @@ class MegatronColumnLinear(MockedModel):
                     stage="backward.MegatronColumnLinear." + self.name,
                 )
             )
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             if not self.sequence_parallel_enabled:
                 workloads.append(
                     LogItem(
                         comm_type=CommType.all_reduce,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.tp_num,
+                        comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
                         stage="backward.MegatronColumnLinear",
                     )
@@ -381,16 +381,16 @@ class GroupedMLP(MockedModel):
         batch_size,
         hidden_size,
         tp,
-        expert_parallel_size,
+        expert_model_parallel_size,
         ffn_hidden_size,
         seq_len,
         topk,
-        num_moe_experts,
+        num_experts,
         id,
     ):
-        self.name = "moelayer"
+        self.name = "mlp_moelayer"
         self.layer_id = id
-        num_local_experts = num_moe_experts // expert_parallel_size
+        num_local_experts = num_experts // expert_model_parallel_size
         fc1_output_size = ffn_hidden_size * num_local_experts
         fc1_output_size_per_parttition = divide(fc1_output_size, tp)
         fc2_input_size = ffn_hidden_size * num_local_experts
@@ -400,30 +400,13 @@ class GroupedMLP(MockedModel):
         self.tp_size = tp
         self.topk = topk
         self.seq_len = seq_len
-        self.num_experts = num_moe_experts
+        self.num_experts = num_experts
         self.batch_size = batch_size
+        self.hidden_size = hidden_size
 
     def permutation(self, stage):
         workloads = Workload()
         if self.tp_size > 1:
-            workloads.append(
-                LogItem(
-                    comm_type=CommType.all_gather,
-                    comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_size,
-                    msg_size=self.seq_len * self.num_experts * 2,
-                    stage="{stage}.Moe",
-                )
-            )
-            workloads.append(
-                LogItem(
-                    comm_type=CommGroup.all_gather,
-                    comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_size,
-                    msg_size=16 * 2,
-                    stage="{stage}.Moe",
-                )
-            )
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_to_all,
@@ -434,7 +417,7 @@ class GroupedMLP(MockedModel):
                     * self.batch_size
                     // self.tp_size
                     * 2,
-                    stage="{stage}.Moe",
+                    stage=f"{stage}.MoE",
                 )
             )
         workloads.append(
@@ -444,10 +427,9 @@ class GroupedMLP(MockedModel):
                 msg_size=self.seq_len
                 * self.hidden_size
                 * self.batch_size
-                * self.topk
                 // self.tp_size
                 * 2,
-                stage="{stage}.Moe",
+                stage=f"{stage}.MoE",
             )
         )
         if self.tp_size > 1:
@@ -458,10 +440,9 @@ class GroupedMLP(MockedModel):
                     comm_group=CommGroup.tp_group,
                     msg_size=2
                     * self.hidden_size
-                    * self.num_experts
-                    * self.seq_len
-                    // self.tp_size,
-                    stage="{stage}.Moe",
+                    * self.topk * self.batch_size
+                    * self.seq_len,
+                    stage=f"{stage}.MoE.permutation",
                 )
             )
 
@@ -476,11 +457,10 @@ class GroupedMLP(MockedModel):
                     comm_type=CommType.reduce_scatter,
                     comm_group=CommGroup.tp_group,
                     msg_size=2
-                    * self.hidden_size
-                    * self.num_experts
-                    * self.seq_len
-                    // self.tp_size,
-                    stage="{stage}.Moe",
+                    * self.hidden_size * self.batch_size
+                    * self.topk
+                    * self.seq_len,
+                    stage=f"{stage}.MoE.unpermutation",
                 )
             )
         workloads.append(
@@ -493,7 +473,7 @@ class GroupedMLP(MockedModel):
                 * self.topk
                 // self.tp_size
                 * 2,
-                stage="{stage}.Moe",
+                stage=f"{stage}.MoE",
             )
         )
 
@@ -503,8 +483,8 @@ class GroupedMLP(MockedModel):
                 LogItem(
                     comm_type=CommType.all_to_all,
                     comm_group=CommGroup.tp_group,
-                    msg_size=2 * self.hidden_size * self.seq_len // self.tp_size,
-                    stage="{stage}.Moe",
+                    msg_size=2 * self.hidden_size * self.seq_len * self.batch_size // self.tp_size,
+                    stage=f"{stage}.MoE",
                 )
             )
 
@@ -512,6 +492,12 @@ class GroupedMLP(MockedModel):
 
     def forward(self):
         workloads = Workload()
+        workloads.append(LogItem(
+                    comm_type=CommType.all_gather,
+                    comm_group=CommGroup.tp_group,
+                    msg_size=2 * self.hidden_size * self.batch_size * self.seq_len,
+                    stage=f"forward.MoE.preprocess",
+                ))
         workloads.extend(self.permutation(stage="forward"))
         workloads.extend(self.unpermutation(stage="forward"))
         assert all([isinstance(workload, LogItem) for workload in workloads.workload])
@@ -541,14 +527,14 @@ class MegatronTransformorLayer(MockedModel):
         batch_size,
         num_attention_heads,
         layer_id,
-        expert_parallel_size,
+        expert_model_parallel_size,
         moe_router_topk,
-        num_moe_experts,
+        num_experts,
         moe_grouped_gemm=True,
         sequence_parallel_enabled=True,
         computation_enable=False,
         add_bias_linear=False,
-        moe_enabled=False,
+        moe_enable=False,
     ):
         self.attention = MegatronAttention(
             num_attention_heads,
@@ -563,16 +549,16 @@ class MegatronTransformorLayer(MockedModel):
         )
         self.pre_mlp_layernorm = FusedLayernorm(hidden_size)
         self.post_attention_layernorm_bias = MockedParam((hidden_size, 1))
-        if moe_enabled and moe_grouped_gemm:
+        if moe_enable and moe_grouped_gemm:
             self.mlp = GroupedMLP(
                 batch_size,
                 hidden_size,
                 tp,
-                expert_parallel_size,
+                expert_model_parallel_size,
                 ffn_hidden_size,
                 seq_len,
                 moe_router_topk,
-                num_moe_experts,
+                num_experts,
                 layer_id,
             )
         else:
@@ -611,19 +597,19 @@ class MegatronEmbedding(MockedModel):
         self.word_embedding = MockedParam(
             (2 * num_embedding_per_partition, hidden_size), name=self.name
         )
-        self.tp_num = tp
+        self.tensor_model_parallel_size = tp
         # TODO : position embedding shape is max_sequence_length not sequence_length
         self.position_embedding = MockedParam((seq_len, hidden_size))
         self.comm_size = 2 * batch_size * seq_len * hidden_size
 
     def forward(self):
         workloads = Workload()
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_reduce,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_num,
+                    comm_group_size=self.tensor_model_parallel_size,
                     msg_size=self.comm_size,
                     stage="forward.MegatronEmbedding",
                 )
@@ -632,12 +618,12 @@ class MegatronEmbedding(MockedModel):
 
     def backward(self):
         workloads = Workload()
-        if self.tp_num > 1:
+        if self.tensor_model_parallel_size > 1:
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_reduce,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_num,
+                    comm_group_size=self.tensor_model_parallel_size,
                     msg_size=self.comm_size,
                     stage="backward.MegatronEmbedding",
                 )
@@ -650,7 +636,7 @@ class MegatronModel(MockedModel):
         self.embedding = MegatronEmbedding(
             config.padded_vocab_size,
             config.hidden_size,
-            config.tp_num,
+            config.tensor_model_parallel_size,
             config.seq_length,
             config.micro_batch,
         )
@@ -658,26 +644,26 @@ class MegatronModel(MockedModel):
             MegatronTransformorLayer(
                 config.hidden_size,
                 config.ffn_hidden_size,
-                config.tp_num,
+                config.tensor_model_parallel_size,
                 config.seq_length,
                 config.micro_batch,
                 config.num_attention_heads,
                 i,
-                config.expert_parallel_size,
+                config.expert_model_parallel_size,
                 config.moe_router_topk,
-                config.num_moe_experts,
+                config.num_experts,
                 config.moe_grouped_gemm,
                 config.enable_sequence_parallel,
                 config.computation_enable,
                 config.add_bias_linear,
-                config.moe_enabled,
+                config.moe_enable,
             )
             for i in range(config.num_layers)
         ]
         self.final_norm = MegatronColumnLinear(
             config.hidden_size,
             config.padded_vocab_size,
-            config.tp_num,
+            config.tensor_model_parallel_size,
             config.seq_length,
             config.micro_batch,
             1,

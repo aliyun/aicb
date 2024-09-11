@@ -1,10 +1,13 @@
 #!/usr/bin/python3
 """ 
 Usage:
-export IMAGE_NAME=DUMMY_IMAGE_NAME
-pscp.pssh -h iplist iplist /root/
-pscp.pssh -h iplist -r /root/aicb /root
-pssh -i -h iplist-16 -o out -e err -t 0 "cd /root/aicb && python run_in_cluster.py"
+1. change IMAGE_NAME form DUMMY to your real image name 
+2. change iplist to your real /path/to/iplist
+3. change DIR to your real /path/to/aicb
+4. change command line after /bin/sh -c '...' to run workload you want
+4. pscp.pssh -h iplist iplist /root/
+5. pscp.pssh -h iplist -r /root/aicb /root
+6. pssh -i -h iplist -o out -e err -t 0 "cd /root/aicb && python scripts/run_in_cluster.py"
 """
 import subprocess
 import os
@@ -46,8 +49,8 @@ command = f"""docker run --name aicb_test --gpus all --privileged \
 -e MASTER_PORT={MASTER_PORT} \
 -v {AICB_DIR}:/workspace/{AICB_DIR_base} \
 {IMAGE_NAME} /bin/sh -c 'cd /workspace/LLM_workload && pwd && sh ./scripts/megatron_gpt.sh \
--m 13 --world_size 8 --tp_num 8 --pp_num 1 \
---comm_frame Megatron --global_batch 2  \
+-m 13 --world_size 8 --tensor_model_parallel_size 8 --pipeline_model_parallel 1 \
+--frame Megatron --global_batch 2  \
 --micro_batch 1 --seq_length 4096 \
 --swiglu --use_flash_attn  --aiob_enable '
 """

@@ -256,5 +256,5 @@ if __name__ == "__main__":
         workload_generator = DeepSpeedStage2(args, model)
         filename = "deepspeed_stage2.csv"
     workload = workload_generator()
-    workload.dump(args, filename)
+    workload.dump(filename)
     # WorkloadWriter.write_workload(workload, args, filename)

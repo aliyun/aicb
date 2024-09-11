@@ -11,22 +11,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 import time
 import torch
 
 
 class CudaEventTimer(object):
+    """Borrowed from Deepspeed"""
     def __init__(self, start_event: torch.cuda.Event, end_event: torch.cuda.Event):
         self.start_event = start_event
         self.end_event = end_event
 
     def get_elapsed_msec(self):
-        torch.cuda.current_stream().wait_event(self.end_event)
+        #torch.cuda.current_stream().wait_event(self.end_event)
         self.end_event.synchronize()
         return self.start_event.elapsed_time(self.end_event)
 
@@ -40,7 +36,7 @@ class Timer:
 
     def start(self):
         """Start the timer."""
-        assert not self.started_, f"{self.name_} timer has already been started"
+        assert not self.started_, f"timer has already been started"
         if self.use_host_timer:
             self.start_time = time.time()
         else:

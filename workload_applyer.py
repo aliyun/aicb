@@ -42,7 +42,7 @@ class WorkloadApplyer:
         torch.cuda.set_device(self.device)
         self.device = torch.cuda.current_device()
         self.comm_group_info, self.pp_global_rank_info = (
-            self._generate_dp_tp_pp_groups()
+            self._generate_dp_tp_pp_ep_groups()
         )
         self.workload = workload
         self.comm_type_function = {
@@ -59,7 +59,9 @@ class WorkloadApplyer:
             CommType.computation: self._apply_computation,
             CommType.all_to_all: self._apply_all_to_all,
             CommType.epoch_end: bench_logger.end_epoch,
+
         }
+
         cal_tuple_num = lambda t: math.prod(t[0]) + math.prod(t[1])
         max_msg_size = max(
             [
@@ -73,7 +75,7 @@ class WorkloadApplyer:
         )
         self.gemm_cache = {}
         self.computation_aiob = False
-        if args.aiob_enable:
+        if args.aiob_enable and args.frame == "Megatron":
             self.computation_aiob = True
 
         self.skip_computation = False
@@ -82,57 +84,104 @@ class WorkloadApplyer:
         self.buffer = torch.empty(
             (max_msg_size,), dtype=torch.bfloat16, device=self.device
         )
-
-    def _generate_dp_tp_pp_groups(self):
+    def _generate_dp_tp_pp_ep_groups(self):
+        """Borrow from Megatron-LM"""
         all_data_parallel_group_ranks = []
         world_size = self.args.world_size
         rank = torch.distributed.get_rank()
         self.rank = rank
-        tensor_model_parallel_size, pipeline_model_parallel_size, data_parallel_size = (
-            self.args.tp_num,
-            self.args.pp_num,
+        tensor_model_parallel_size, pipeline_model_parallel_size, data_parallel_size,expert_model_parallel_size = (
+            self.args.tensor_model_parallel_size,
+            self.args.pipeline_model_parallel,
             self.args.dp_num,
+            self.args.expert_model_parallel_size,
         )
-        num_tensor_model_parallel_groups: int = world_size // tensor_model_parallel_size
-        num_pipeline_model_parallel_groups: int = (
-            world_size // pipeline_model_parallel_size
-        )
-        num_data_parallel_groups: int = world_size // data_parallel_size
-
-        for i in range(pipeline_model_parallel_size):
-            start_rank = i * num_pipeline_model_parallel_groups
-            end_rank = (i + 1) * num_pipeline_model_parallel_groups
-            for j in range(tensor_model_parallel_size):
-                ranks = range(start_rank + j, end_rank, tensor_model_parallel_size)
-                all_data_parallel_group_ranks.append(list(ranks))
-                group = torch.distributed.new_group(ranks)
-                if rank in ranks:
-                    dp_group = group
-        for i in range(data_parallel_size):
-            ranks = [
-                data_parallel_group_ranks[i]
-                for data_parallel_group_ranks in all_data_parallel_group_ranks
-            ]
-            group = torch.distributed.new_group(ranks)
-            if rank in ranks:
-                mp_group = group
-        for i in range(num_tensor_model_parallel_groups):
-            ranks = range(
-                i * tensor_model_parallel_size, (i + 1) * tensor_model_parallel_size
+        rank_generator = utils.RankGenerator(
+        tp=tensor_model_parallel_size,
+        ep=expert_model_parallel_size,
+        dp=data_parallel_size,
+        pp=pipeline_model_parallel_size,
+        cp=self.args.context_parallel_size,
+        order='tp-cp-ep-dp-pp',
+    )
+        for ranks in rank_generator.get_ranks('ep', independent_ep=True):
+            group = torch.distributed.new_group(
+                ranks
             )
-            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                ep_group = group
+        for ranks in rank_generator.get_ranks('tp'):
+            group = torch.distributed.new_group(
+                ranks
+            )
             if rank in ranks:
                 tp_group = group
-        for i in range(num_pipeline_model_parallel_groups):
-            ranks = range(i, world_size, num_pipeline_model_parallel_groups)
-            group = torch.distributed.new_group(ranks)
+        for ranks in rank_generator.get_ranks('pp'):
+            group = torch.distributed.new_group(
+                ranks
+            )
             if rank in ranks:
-                pp_global_rank = ranks
                 pp_group = group
+                pp_global_rank = ranks
+            # Setup embedding group (to exchange gradients between
+            # first and last stages).
+            # if len(ranks) > 1:
+            #     embedding_ranks = [ranks[0], ranks[-1]]
+            #     position_embedding_ranks = [ranks[0]]
+            #     if self.args.pipeline_model_parallel_split_rank is not None:
+            #         if ranks[self.args.pipeline_model_parallel_split_rank] not in embedding_ranks:
+            #             embedding_ranks = [
+            #                 ranks[0],
+            #                 ranks[self.args.pipeline_model_parallel_split_rank],
+            #                 ranks[-1],
+            #             ]
+            #         if ranks[self.args.pipeline_model_parallel_split_rank] not in position_embedding_ranks:
+            #             position_embedding_ranks = [ranks[0], ranks[self.args.pipeline_model_parallel_split_rank]]
+            # else:
+            #     embedding_ranks = ranks
+            #     position_embedding_ranks = ranks
+
+            # group = torch.distributed.new_group(
+            #     embedding_ranks
+            # )
+            # if rank in embedding_ranks:
+            #     _EMBEDDING_GROUP = group
+            # if rank in ranks:
+            #     _EMBEDDING_GLOBAL_RANKS = embedding_ranks
+
+            # group = torch.distributed.new_group(
+            #     position_embedding_ranks,
+                
+            # )
+            # if rank in position_embedding_ranks:
+            #     _POSITION_EMBEDDING_GROUP = group
+            # if rank in ranks:
+            #     _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
+        for ranks in rank_generator.get_ranks('dp'):
+            group = torch.distributed.new_group(
+                ranks
+            )
+            if rank in ranks:
+                dp_group = group
+        for ranks in rank_generator.get_ranks('tp-ep', independent_ep=True):
+            group = torch.distributed.new_group(
+                ranks
+            )
+            if rank in ranks:
+                ep_tp_group = group
+        for ranks in rank_generator.get_ranks('dp', independent_ep=True):
+            group = torch.distributed.new_group(
+                ranks
+            )
+            if rank in ranks:
+                ep_dp_group = group
         return {
             CommGroup.tp_group: tp_group,
             CommGroup.dp_group: dp_group,
             CommGroup.pp_group: pp_group,
+            CommGroup.ep_group: ep_group,
+            CommGroup.ep_tp_group: ep_tp_group,
+            CommGroup.ep_dp_group: ep_dp_group,
         }, pp_global_rank
 
     def _get_pipeline_parallel_size(self):
@@ -167,7 +216,7 @@ class WorkloadApplyer:
             else:
                 pass
         if item.additional == "send_next":
-            if self._get_pipeline_parallel_rank() != self.args.pp_num - 1:
+            if self._get_pipeline_parallel_rank() != self.args.pipeline_model_parallel - 1:
                 send_next_op = torch.distributed.P2POp(
                     torch.distributed.isend, tensor, self._get_pipeline_next_rank()
                 )
@@ -188,7 +237,7 @@ class WorkloadApplyer:
             else:
                 pass
         if item.additional == "recv_next":
-            if self._get_pipeline_parallel_rank() != self.args.pp_num - 1:
+            if self._get_pipeline_parallel_rank() != self.args.pipeline_model_parallel - 1:
                 tensor_recv_next = torch.empty(
                     item.msg_size // 2, dtype=torch.bfloat16, device=self.device
                 )
@@ -262,6 +311,9 @@ class WorkloadApplyer:
         return torch.distributed.all_gather_into_tensor(
             output_tensor, input_tensor, group=group, async_op=False
         )
+    @bench_logger.log_timing("comm")
+    def _overlap(self, item):
+        item.additional = 'overlap'
 
     @bench_logger.log_timing("comm")
     def _apply_reduce_scatter(self, item):
@@ -306,17 +358,13 @@ class WorkloadApplyer:
         if self.computation_aiob:
             time.sleep(item.msg_size / 1e9)
         else:
-            if self.always_apply_gemm or item.msg_size not in self.gemm_cache:
-                input_shape1, input_shape2 = item.msg_size
-                A, B = torch.rand(input_shape1, device=self.device), torch.rand(
-                    input_shape2, device=self.device
-                )
-                t = time.time()
-                for _ in range(self.gemm_iters):
-                    torch.matmul(A, B)
-                self.gemm_cache[item.msg_size] = (time.time() - t) / self.gemm_iters
-            else:
-                time.sleep(self.gemm_cache[item.msg_size])
+            # item.msg_size = 1
+            input_shape1, input_shape2 = item.msg_size
+            A, B = torch.rand(input_shape1, device=self.device), torch.rand(
+                input_shape2, device=self.device
+            )
+            torch.matmul(A, B)
+            return
 
     def apply_workload(self):
         torch.cuda.synchronize(self.device)
@@ -329,6 +377,7 @@ class WorkloadApplyer:
                 and key in item.stage
             ):
                 comm_func = self.comm_type_function[item.comm_type]
+                # comm_func = self._overlap()
                 # comm_func(item)
             else:
                 comm_func = self.comm_type_function[item.comm_type]

@@ -30,6 +30,193 @@ except ImportError as e:
     torch = None
     print("Failed to import 'torch'.")
 
+def generate_masked_orthogonal_rank_groups(
+    world_size: int, parallel_size: List[int], mask: List[bool],
+) -> List[List[int]]:
+    """Generate orthogonal parallel groups based on the parallel size and mask.
+
+    Arguments:
+        world_size (int): world size
+
+        parallel_size (List[int]):
+            The parallel size of each orthogonal parallel type. For example, if
+            tensor_parallel_size = 2, pipeline_model_parallel_group = 3, data_parallel_size = 4,
+            and the parallel mapping order is tp-pp-dp, then the parallel_size = [2, 3, 4].
+
+        mask (List[bool]):
+            The mask controls which parallel methods the generated groups represent. If mask[i] is
+            True, it means the generated group contains the i-th parallelism method. For example, 
+            if parallel_size = [tp_size, pp_size, dp_size], and mask = [True, False , True], then 
+            the generated group is the `tp-dp` group, if the mask = [False, True, False], then the 
+            generated group is the `pp` group.
+
+    Algorithm:
+        For orthogonal parallelism, such as tp/dp/pp/cp, the global_rank and
+        local_rank satisfy the following equation:
+            global_rank = tp_rank + dp_rank * tp_size + pp_rank * tp_size * dp_size (1)
+                tp_rank \in [0, tp_size)
+                dp_rank \in [0, dp_size)
+                pp_rank \in [0, pp_size)
+
+        If we want to get the `dp_group` (tp_size * pp_size groups of dp_size ranks each.
+        For example,  if the gpu size is 8 and order is 'tp-pp-dp', size is '2-2-2', and the 
+        dp_group here is [[0, 4], [1, 5], [2, 6], [3, 7]].)
+        The tp_rank and pp_rank will be combined to form the `dp_group_index`.
+            dp_group_index = tp_rank + pp_rank * tp_size (2)
+
+        So, Given that tp_rank and pp_rank satisfy equation (2), and dp_rank in
+        range(0, dp_size), the ranks in dp_group[dp_group_index] satisfies the
+        equation (1).
+        
+        This function solve this math problem.
+
+    For example, if the parallel_size = [tp_size, dp_size, pp_size] = [2, 3, 4],
+    and the mask = [False, True, False]. Then,
+        dp_group_index(0) = tp_rank(0) + pp_rank(0) * 2
+        dp_group_index(1) = tp_rank(1) + pp_rank(0) * 2
+        ...
+        dp_group_index(7) = tp_rank(1) + pp_rank(3) * 2
+
+        dp_group[0] = 0 + range(0, 3) * 2 + 0 = [0, 2, 4]
+        dp_group[1] = 1 + range(0, 3) * 2 + 0 = [1, 3, 5]
+        ...
+        dp_group[7] = 1 + range(0, 3) * 2 + 3 * 2 * 3 = [19, 21, 23]
+    """
+
+    def prefix_product(a: List[int], init=1) -> List[int]:
+        r = [init]
+        for v in a:
+            init = init * v
+            r.append(init)
+        return r
+
+    def inner_product(a: List[int], b: List[int]) -> int:
+        return sum([x * y for x, y in zip(a, b)])
+
+    def decompose(index, shape, stride=None):
+        ''' 
+        This function solve the math problem below:
+            There is an equation: 
+                index = sum(idx[i] * stride[i])
+            And given the value of index, stride.
+            Return the idx.
+        This function will used to get the pp/dp/pp_rank
+        from group_index and rank_in_group.
+        '''
+        if stride is None:
+            stride = prefix_product(shape)
+        idx = [(index // d) % s for s, d in zip(shape, stride)]
+        # stride is a prefix_product result. And the value of stride[-1]
+        # is not used.
+        assert (
+            sum([x * y for x, y in zip(idx, stride[:-1])]) == index
+        ), "idx {} with shape {} mismatch the return idx {}".format(index, shape, idx)
+        return idx
+
+    masked_shape = [s for s, m in zip(parallel_size, mask) if m]
+    unmasked_shape = [s for s, m in zip(parallel_size, mask) if not m]
+
+    global_stride = prefix_product(parallel_size)
+    masked_stride = [d for d, m in zip(global_stride, mask) if m]
+    unmasked_stride = [d for d, m in zip(global_stride, mask) if not m]
+
+    group_size = prefix_product(masked_shape)[-1]
+    num_of_group = world_size // group_size
+
+    ranks = []
+    for group_index in range(num_of_group):
+        # get indices from unmaksed for group_index.
+        decomposed_group_idx = decompose(group_index, unmasked_shape)
+        rank = []
+        for rank_in_group in range(group_size):
+            # get indices from masked for rank_in_group.
+            decomposed_rank_idx = decompose(rank_in_group, masked_shape)
+            rank.append(
+                inner_product(decomposed_rank_idx, masked_stride)
+                + inner_product(decomposed_group_idx, unmasked_stride)
+            )
+        ranks.append(rank)
+    return ranks
+class RankGenerator(object):
+    def __init__(self, tp: int, ep: int, dp: int, pp: int, cp: int, order: str) -> None:
+        self.tp = tp
+        self.ep = ep
+        self.dp = dp
+        self.pp = pp
+        self.cp = cp
+        self.world_size = tp * dp * pp * cp
+
+        self.name_to_size = {
+            "tp": self.tp,
+            "pp": self.pp,
+            "dp": self.dp,
+            "ep": self.ep,
+            "cp": self.cp,
+        }
+        self.order = order
+        order = order.lower()
+
+        if 'ep' in order:
+            if 'ep-dp' not in order and 'dp-ep' not in order:
+                raise RuntimeError(f"The ep and dp must be adjacent in order ({self.order}).")
+
+        for name in self.name_to_size.keys():
+            if name not in order and self.name_to_size[name] != 1:
+                raise RuntimeError(
+                    f"The size of ({name}) is ({self.name_to_size[name]}), but you haven't specified the order ({self.order})."
+                )
+            elif name not in order:
+                order = order + '-' + name
+
+        self.order_w_ep = order
+        self.order_wo_ep = '-'.join([token for token in order.split('-') if token != 'ep'])
+        self.ordered_size_wo_ep = []
+        self.ordered_size_w_ep = []
+
+        for token in order.split('-'):
+            if token == 'dp':
+                self.ordered_size_w_ep.append(self.dp // self.ep)
+                self.ordered_size_wo_ep.append(self.dp)
+            elif token == 'ep':
+                self.ordered_size_w_ep.append(self.ep)
+            else:
+                self.ordered_size_w_ep.append(self.name_to_size[token])
+                self.ordered_size_wo_ep.append(self.name_to_size[token])
+
+    def get_mask(self, order: str, token: str):
+        ordered_token = order.split('-')
+        token = token.split('-')
+        mask = [False] * len(ordered_token)
+        for t in token:
+            mask[ordered_token.index(t)] = True
+        return mask
+
+    def get_ranks(self, token, independent_ep=False):
+        '''Get rank group by input token.
+
+        Arguments:
+            token (str):
+                Specify the ranks type that want to get. If we want
+                to obtain multiple parallel types, we can use a hyphen
+                '-' to separate them. For example, if we want to obtain
+                the TP_DP group, the token should be 'tp-dp'.
+
+            independent_ep (bool: True):
+                This flag controls whether we treat EP and DP independently.
+                EP shares ranks with DP, if we want to get ranks related to
+                EP, we should set the flag. For example, get_ranks('dp', True)
+                will get DP modulo EP group, and get_ranks('dp', False) will
+                get full DP group.
+        '''
+        if independent_ep:
+            parallel_size = self.ordered_size_w_ep
+            order = self.order_w_ep
+        else:
+            parallel_size = self.ordered_size_wo_ep
+            order = self.order_wo_ep
+        mask = self.get_mask(order, token)
+        ranks = generate_masked_orthogonal_rank_groups(self.world_size, parallel_size, mask)
+        return ranks
 
 def gelu_impl(x):
     """OpenAI's gelu implementation."""
@@ -68,9 +255,9 @@ def get_comp_out(args):
     vocab_size = args.vocab_size
     batch_size = args.micro_batch
     seq_len = args.seq_length
-    tp = args.tp_num
+    tp = args.tensor_model_parallel_size
     vocab_size = args.padded_vocab_size
-    if "Megatron" in args.comm_frame:
+    if "Megatron" in args.frame:
         device = torch.cuda.current_device()
         from workload_generator.mocked_model.AiobMegatron import MegatronModel
 
@@ -94,7 +281,9 @@ def get_comp_out(args):
             dtype=torch.int64,
         )
         filepath = measure_model(masked_input)
-    return filepath
+        return filepath
+
+    
 
 
 def extract_averages(file_path):
@@ -218,15 +407,16 @@ def cuda_timing_decorator(func):
         return result, elapsed_time_ms
 
     return wrapper
-
-
-def write_op(time_list, args):
+def get_aiob_path(args):
     result_dir = "./results/aiob_outputs"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tp_num}-pp{args.pp_num}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-flash_attn-{args.use_flash_attn}.txt"
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-flash_attn-{args.use_flash_attn}.txt"
     filepath = os.path.join(result_dir, filename)
+    return filepath
+
+def write_op(time_list, args):
+    filepath = get_aiob_path(args)
     with open(filepath, "w") as file:
         file.write(f"train_iter:{args.epoch_num}\n")
         data_str = json.dumps(time_list, indent=4)
@@ -291,8 +481,6 @@ class WorkloadWriter:
         df = pd.DataFrame.from_dict(workload)
         df = df.fillna(-1)
         df.to_csv(filename, index=False)
-        filename = filename.split(".")[0] + ".pkl"
-        pickle.dump((workload, args), open(filename, "wb"))
 
     @staticmethod
     def load_workload(filename: str) -> List[Dict]:
@@ -306,17 +494,19 @@ class WorkloadWriter:
 def get_params():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--comm_frame",
+        "--frame",
         help="communication framework",
         choices=["Megatron", "DeepSpeed", "collective_test"],
         default="Megatron",
     )
     parser.add_argument("--world_size", type=int, default=1,
                         help="Number of GPUs")
-    parser.add_argument("--tp_num", type=int, default=1,
+    parser.add_argument("--tensor_model_parallel_size", type=int, default=1,
                         help='Degree of tensor model parallelism.')
-    parser.add_argument("--pp_num", type=int, default=1,
+    parser.add_argument("--pipeline_model_parallel", type=int, default=1,
                         help='Degree of pipeline model parallelism.')
+    parser.add_argument('--context-parallel-size', type=int, default=1,
+                       help='Degree of context parallelism.')
     parser.add_argument("--pp_rank", type=int, default=-1,
                         help='Rank where encoder and decoder should be split.')
     parser.add_argument("--global_batch", type=int, default=4,
@@ -333,14 +523,19 @@ def get_params():
                         )
     parser.add_argument("--epoch_num", type=int, default=1,
                         help="Number of iterations")
-    parser.add_argument("--computation_enable", type=int, default=1)
-    parser.add_argument("--dtype", default="float16")
+    parser.add_argument("--computation_enable", action="store_true", help="Enable computation")
+    parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument(
         "--ffn_hidden_size",
         type=int,
         default=None,
         help="Transformer Feed-Forward Network hidden size. "
         "This is set to 4*hidden-size if not provided",
+    )
+    parser.add_argument(
+        "--enable_visual",
+        action="store_true",
+        help="Enable visualization",
     )
     get_model_params(parser)
     get_ds_params(parser)
@@ -352,20 +547,23 @@ def get_params():
     args = parser.parse_args()
 
     assert (
-        args.world_size % (args.tp_num * args.pp_num) == 0
-    ), f"world size: {args.world_size}, tp: {args.tp_num}, pp: {args.pp_num}"
-    if args.moe_enabled:
+        args.world_size % (args.tensor_model_parallel_size * args.pipeline_model_parallel) == 0
+    ), f"world size: {args.world_size}, tp: {args.tensor_model_parallel_size}, pp: {args.pipeline_model_parallel}"
+    if args.moe_enable:
         assert (
-            args.moe_enabled and args.enable_sequence_parallel
+            args.moe_enable and args.enable_sequence_parallel
         ), f"moe must be enabled with sequence parallel"
-    args.dp_num = args.world_size // (args.tp_num * args.pp_num)
+    args.dp_num = args.world_size // (args.tensor_model_parallel_size * args.pipeline_model_parallel)
     # assert args.global_batch % (args.dp_num * args.micro_batch) == 0, \
     #     f"global_batch: {args.global_batch}, dp: {args.dp_num}, micro_batch: {args.micro_batch}"
     args.num_microbatches = args.global_batch // (args.dp_num * args.micro_batch)
-
+    if args.aiob_enable and not args.computation_enable:
+            args.computation_enable = True
+            
     if args.num_attention_heads is None:
         args.num_attention_heads = args.num_layers
 
+                    
     args.padded_vocab_size = get_padded_vocab_size(args)
     if args.ffn_hidden_size is None:
         if args.swiglu:
@@ -381,6 +579,17 @@ def get_params():
     if args.swiglu:
         args.gated_linear_unit = True
         args.bias_gelu_fusion = False
+    # Expert parallelism check
+    if args.expert_model_parallel_size  > 1:
+        assert args.num_experts is not None, "num_experts must be non None to use expert model parallelism"
+        assert args.num_experts % args.expert_model_parallel_size == 0, \
+            "Number of experts should be a multiple of expert model parallel_size."
+        assert not args.dtype == "float16", \
+            "Expert parallelism is not supported with fp16 training."
+    if args.moe_grouped_gemm:
+        assert args.dtype == "bfloat16", 'Currently GroupedGEMM for MoE only supports bf16 dtype.'
+    if args.pipeline_model_parallel > 1 :
+        args.num_layers = int(args.num_layers//args.pipeline_model_parallel)
     return args
 
 
@@ -415,6 +624,9 @@ def get_aiob_params(parser: argparse.ArgumentParser):
                        'Torch ONNX exporter')
     parser.add_argument("--squared_relu", action="store_true",
                         help='Use squared relu activation instead of default gelu')
+    parser.add_argument('--recompute_activations', action='store_true',
+                       help='recompute activation to allow for training '
+                       'with larger models, sequences, and batch sizes.')
 
 
 def get_model_params(parser: argparse.ArgumentParser):
@@ -490,9 +702,9 @@ def get_simAI_workload_params(parser: argparse.ArgumentParser):
     parser.add_argument("--overlap_version", action="store_true")
 
 def get_moe_params(parser: argparse.ArgumentParser):
-    parser.add_argument('--moe_enabled', action="store_true")
-    parser.add_argument('--expert_parallel_size', type=int, default=1, help='Degree of expert model parallelism.')
-    parser.add_argument('--num_moe_experts', type=int, default=1, help='Number of Experts in MoE (None means no MoE)')
+    parser.add_argument('--moe_enable', action="store_true")
+    parser.add_argument('--expert_model_parallel_size', type=int, default=1, help='Degree of expert model parallelism.')
+    parser.add_argument('--num_experts', type=int, default=1, help='Number of Experts in MoE (None means no MoE)')
     parser.add_argument('--moe_router_topk', type=int, default=1, help='Number of experts to route to for each token. The default is 2.')
     parser.add_argument('--moe_grouped_gemm', action='store_true',
                        help='When there are multiple experts per rank, compress multiple local (potentially small) gemms in a single kernel launch to improve the utilization and performance by leveraging the Grouped GEMM feature introduced since CUTLASS 2.8 (https://github.com/fanshiqing/grouped_gemm).')
@@ -511,7 +723,7 @@ def get_padded_vocab_size(args):
 
     after = args.vocab_size
 
-    multiple = args.make_vocab_size_divisible_by * args.tp_num
+    multiple = args.make_vocab_size_divisible_by * args.tensor_model_parallel_size
     while (after % multiple) != 0:
 
         after += 1

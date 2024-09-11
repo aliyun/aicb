@@ -56,6 +56,8 @@ def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
         prefix = stage + "_" + forward_or_backward
     elif stage == "embedding":
         prefix = "Emb"
+    elif stage == "final":
+        prefix = "attention" + "_" + forward_or_backward
     else:
         prefix = stage + "_" + forward_or_backward
 
@@ -66,7 +68,7 @@ def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
             return compute_time
 
     print("[warn] can't match any stage", stage)
-    return compute_time_map.get("default")
+    return 1
 
 
 class LayerInfo:
@@ -83,10 +85,11 @@ class SIMAI_workload:
         self.compute_cache = compute_cache
         self.workload = []
         self.seq_len = args.seq_length
-        self.tp = args.tp_num
-        if args.moe_enabled:
-            self.expert_parallel_size = args.expert_parallel_size
-            self.num_experts = args.num_moe_experts
+        self.tp = args.tensor_model_parallel_size
+        self.mbs = args.micro_batch
+        if args.moe_enable:
+            self.expert_model_parallel_size = args.expert_model_parallel_size
+            self.num_experts = args.num_experts
             self.topk = args.moe_router_topk
 
     def get_model_details(self):
@@ -143,8 +146,8 @@ class SIMAI_workload:
 
     def workload_generate_aiob(self):
         # args.world_size --> total gpus number
-        ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
-        if ga_num < 1:
+        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
+        if self.ga_num < 1:
             print(
                 "[WARN]: ga num < 1, please confirm global_batch num and micro_batch num"
             )
@@ -154,7 +157,7 @@ class SIMAI_workload:
             2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size
         )
         layers = self.get_model_details()
-        total_params = self._get_total_params()
+        total_params, moe_param_count = self._get_total_params()
         # self.workload.append(Work_Item(name="norm", forward_compute_time=0,
         #                         forward_comm = "BROADCAST", forward_comm_size= 8*self.args.micro_batch*self.args.seq_length,
         #                         backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
@@ -177,7 +180,7 @@ class SIMAI_workload:
                 backward_comm_size=0,
                 dp_compute_time=default_compute_time,
                 dp_comm="ALLGATHER",
-                dp_comm_size=2 * total_params,
+                dp_comm_size=2 * (total_params-moe_param_count),
             )
         )
         self.workload.append(
@@ -191,7 +194,7 @@ class SIMAI_workload:
                 backward_comm_size=0,
                 dp_compute_time=default_compute_time,
                 dp_comm="REDUCESCATTER",
-                dp_comm_size=4 * total_params,
+                dp_comm_size=4 * (total_params-moe_param_count),
             )
         )
         self.workload.append(
@@ -224,6 +227,10 @@ class SIMAI_workload:
                     dp_comm_size=0,
                 )
             )
+        if args.tensor_model_parallel_size == 1 :
+            emd_backward_comm = "NONE"
+        else:
+            emd_backward_comm = "ALLREDUCE"
         self.workload.append(
             Work_Item(
                 name="embedding_grads",
@@ -231,72 +238,271 @@ class SIMAI_workload:
                 forward_comm="NONE",
                 forward_comm_size=0,
                 backward_compute_time=default_compute_time,
-                backward_comm="ALLREDUCE",
+                backward_comm=emd_backward_comm,
                 backward_comm_size=tp_comm_size,
                 dp_compute_time=default_compute_time,
                 dp_comm="NONE",
                 dp_comm_size=0,
             )
         )
-        for _ in range(ga_num):
+        if self.args.expert_model_parallel_size != self.args.dp_num:
+            self.workload.append(Work_Item(name="moe_grad_norm1", forward_compute_time=default_compute_time,
+                                    forward_comm = "NONE", forward_comm_size= 0,
+                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
+                                    dp_compute_time=default_compute_time, dp_comm="ALLGATHER_DP_EP", dp_comm_size=2*moe_param_count
+                                    ))
+            self.workload.append(Work_Item(name="moe_grad_norm2", forward_compute_time=default_compute_time,
+                                    forward_comm = "NONE", forward_comm_size= 0,
+                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
+                                    dp_compute_time=default_compute_time, dp_comm="REDUCESCATTER_DP_EP", dp_comm_size=4*moe_param_count
+                                    ))
+        for _ in range(self.ga_num):
             for layer in layers:
                 name = layer.layer_name
                 forward_comm = backward_comm = backward_comm_2 = "NONE"
                 forward_comm_size = tp_comm_size
+                emb_comm_size = tp_comm_size
                 backward_comm_size = 0
-                if self.args.enable_sequence_parallel:
-                    if "row" in name:
-                        forward_comm = "REDUCESCATTER"
-                        backward_comm = "ALLGATHER"
-                    if "column" in name:
-                        forward_comm = "ALLGATHER"
-                        backward_comm = "REDUCESCATTER"
-                        backward_comm_2 = "ALLGATHER"
-                else:
-                    forward_comm = "ALLREDUCE"
-                    backward_comm = "NONE"
                 dp_comm = "NONE"
                 dp_comm_size = 0
-
-                if "embedding" in name:
-                    emb_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "", "embedding"
-                    )
-                    self.workload.append(
-                        Work_Item(
-                            name=name,
-                            forward_compute_time=emb_compute_time,
-                            forward_comm=forward_comm,
-                            forward_comm_size=forward_comm_size,
-                            backward_compute_time=default_compute_time,
-                            backward_comm=backward_comm,
-                            backward_comm_size=backward_comm_size,
-                            dp_compute_time=backward_compute_time,
-                            dp_comm=dp_comm,
-                            dp_comm_size=dp_comm_size,
+                if self.args.enable_sequence_parallel:
+                    if "embedding" in name:
+                        if args.tensor_model_parallel_size == 1 :
+                            forward_comm = "NONE"
+                            backward_comm = "NONE"
+                        else:
+                            forward_comm = "ALLREDUCE"
+                            backward_comm = "NONE"
+                        emb_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "", "embedding"
                         )
-                    )
-                else:
-                    forward_compute_time = _get_aiob_compute_time(
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=emb_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=emb_comm_size ,
+                                backward_compute_time=default_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
+                    if "row" in name:
+                        
+                        forward_compute_time = _get_aiob_compute_time(
                         self.compute_cache, "forward", name.split("_")[0]
-                    )
-                    backward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "backward", name.split("_")[0]
-                    )
-                    self.workload.append(
-                        Work_Item(
-                            name=name,
-                            forward_compute_time=forward_compute_time,
-                            forward_comm=forward_comm,
-                            forward_comm_size=forward_comm_size,
-                            backward_compute_time=backward_compute_time,
-                            backward_comm=backward_comm,
-                            backward_comm_size=backward_comm_size,
-                            dp_compute_time=backward_compute_time,
-                            dp_comm=dp_comm,
-                            dp_comm_size=dp_comm_size,
                         )
-                    )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+
+                        if self.args.recompute_activations and 'attention' in name:
+                            forward_compute_time *= 2
+                        forward_compute_time = int(forward_compute_time / 2)
+                        backward_compute_time = int(backward_compute_time / 2)
+                        forward_comm_size_sp = tp_comm_size
+                        if args.tensor_model_parallel_size == 1 :
+                            forward_comm = "NONE"
+                            backward_comm = "NONE"
+                        else:
+                            forward_comm = "REDUCESCATTER"
+                            backward_comm = "ALLGATHER"
+                        self.workload.append(
+                                Work_Item(
+                                    name=name,
+                                    forward_compute_time=forward_compute_time,
+                                    forward_comm=forward_comm,
+                                    forward_comm_size=forward_comm_size,
+                                    backward_compute_time=backward_compute_time,
+                                    backward_comm=backward_comm,
+                                    backward_comm_size=forward_comm_size_sp,#sp overlap allgather
+                                    dp_compute_time=backward_compute_time,
+                                    dp_comm=dp_comm,
+                                    dp_comm_size=dp_comm_size,
+                                )
+                            )
+
+                    elif "column" in name:
+                        forward_compute_time = _get_aiob_compute_time(
+                        self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+
+                        if self.args.recompute_activations and 'attention' in name:
+                            forward_compute_time *= 2
+                        forward_compute_time = int(forward_compute_time / 2)
+                        backward_compute_time = int(backward_compute_time / 2)
+                        if args.tensor_model_parallel_size == 1 :
+                            forward_comm = "NONE"
+                            backward_comm = "NONE"
+                            backward_comm_2 = "NONE"
+                        else:
+                            forward_comm = "ALLGATHER"
+                            backward_comm = "REDUCESCATTER"
+                            backward_comm_2 = "ALLGATHER"
+                        self.workload.append(
+                                Work_Item(
+                                    name=name,
+                                    forward_compute_time=forward_compute_time,
+                                    forward_comm=forward_comm,
+                                    forward_comm_size=forward_comm_size,
+                                    backward_compute_time=backward_compute_time,
+                                    backward_comm=backward_comm,
+                                    backward_comm_size=backward_comm_size,
+                                    dp_compute_time=backward_compute_time,
+                                    dp_comm=dp_comm,
+                                    dp_comm_size=dp_comm_size,
+                                )
+                            )
+                    elif "moelayer" in name:
+                        forward_compute_time = _get_aiob_compute_time(
+                        self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+                        if args.tensor_model_parallel_size == 1 :
+                            forward_comm1 = "NONE"
+                            forward_comm2 = "NONE"
+                            forward_comm3 = "ALLTOALL_EP"
+                            forward_comm4 = "NONE"
+                            forward_comm5 = "NONE"
+                            forward_comm6 = "ALLTOALL_EP"
+                            forward_comm7 = "NONE"
+                        else:
+                            forward_comm1 = "ALLGATHER"
+                            forward_comm2 = "ALLTOALL"
+                            forward_comm3 = "ALLTOALL_EP"
+                            forward_comm4 = "ALLGATHER"
+                            forward_comm5 = "REDUCESCATTER"
+                            forward_comm6 = "ALLTOALL_EP"
+                            forward_comm7 = "ALLTOALL"
+                        if args.expert_model_parallel_size != 1:
+                            self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
+                                        forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,
+                                        backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=2*self.mbs*self.seq_len*self.num_experts,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm2, forward_comm_size= tp_comm_size//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm2, backward_comm_size=tp_comm_size//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm3, forward_comm_size= tp_comm_size*self.topk//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size=tp_comm_size*self.topk//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm4, forward_comm_size= tp_comm_size*self.topk,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm5, backward_comm_size=tp_comm_size*self.topk,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm5, forward_comm_size= tp_comm_size*self.topk,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm6, forward_comm_size= tp_comm_size*self.topk//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=tp_comm_size*self.topk//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm7, forward_comm_size= tp_comm_size//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm7, backward_comm_size=tp_comm_size//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                        else:
+                            self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
+                                        forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,
+                                        backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=2*self.mbs*self.seq_len*self.num_experts,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm2, forward_comm_size= tp_comm_size//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm2, backward_comm_size=tp_comm_size//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm3, forward_comm_size=1,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size=1,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm4, forward_comm_size= tp_comm_size*self.topk,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm5, forward_comm_size= tp_comm_size*self.topk,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm6, forward_comm_size=1,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=1,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                        forward_comm = forward_comm7, forward_comm_size= tp_comm_size//self.tp,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm7, backward_comm_size=tp_comm_size//self.tp,
+                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                        ))
+                else:
+                    if args.tensor_model_parallel_size == 1 :
+                        forward_comm = "NONE"
+                        backward_comm = "NONE"
+                    else:
+
+                        forward_comm = "ALLREDUCE"
+                        backward_comm = "NONE"
+                    if self.args.recompute_activations and 'attention' in name:
+                        forward_compute_time *= 2
+                    if "embedding" in name:
+                        emb_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "", "embedding"
+                        )
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=emb_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=forward_comm_size,
+                                backward_compute_time=default_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
+                    else:
+                        forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=forward_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=forward_comm_size,
+                                backward_compute_time=backward_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
             # compute_time = _get_aiob_compute_time(self.compute_cache, "forward", "embedding")
             # self.workload.append(Work_Item(name="embedding_norm", forward_compute_time=compute_time,
             #                         forward_comm = "ALLREDUCE", forward_comm_size= self.args.vocab_size*self.args.hidden_size*2,
@@ -337,8 +543,8 @@ class SIMAI_workload:
 
     def workload_generate(self):
         # args.world_size --> total gpus number
-        ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
-        if ga_num < 1:
+        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
+        if self.ga_num < 1:
             print(
                 "[WARN]: ga num < 1, please confirm global_batch num and micro_batch num"
             )
@@ -386,7 +592,18 @@ class SIMAI_workload:
                     dp_comm_size=0,
                 )
             )
-        for _ in range(ga_num):
+        if args.expert_parallel_size != args.dp_num:
+            self.workload.append(Work_Item(name="moe_grad_norm1", forward_compute_time=default_compute_time,
+                                    forward_comm = "NONE", forward_comm_size= 0,
+                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
+                                    dp_compute_time=default_compute_time, dp_comm="ALLGATHER_DP_EP", dp_comm_size=2*moe_param_count
+                                    ))
+            self.workload.append(Work_Item(name="moe_grad_norm2", forward_compute_time=default_compute_time,
+                                    forward_comm = "NONE", forward_comm_size= 0,
+                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
+                                    dp_compute_time=default_compute_time, dp_comm="REDUCESCATTER_DP_EP", dp_comm_size=4*moe_param_count
+                                    ))
+        for _ in range(self.ga_num):
             for layer in layers:
                 name = layer.layer_name
                 forward_comm = backward_comm = backward_comm_2 = "NONE"
@@ -395,26 +612,41 @@ class SIMAI_workload:
                 dp_comm = "NONE"
                 dp_comm_size = 0
                 if self.args.enable_sequence_parallel:
+                    if "embedding" in name:
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=default_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=forward_comm_size,
+                                backward_compute_time=default_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
+
                     if "row" in name:
+                        if self.args.recompute_activations and 'attention' in name:
+                            forward_comm_size *= 2
                         forward_comm = "REDUCESCATTER"
                         backward_comm = "ALLGATHER"
                         self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
                                     forward_comm = forward_comm, forward_comm_size= forward_comm_size,
-                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
+                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=tp_comm_size,
                                     dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                     ))
                     if "column" in name:
+                        if self.args.recompute_activations and 'attention' in name:
+                            forward_comm_size *= 2
                         forward_comm = "ALLGATHER"
                         forward_comm2 = "NONE"
                         backward_comm = "REDUCESCATTER"
                         backward_comm_2 = "ALLGATHER"
                         self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
                                     forward_comm = forward_comm, forward_comm_size= forward_comm_size,
-                                    backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
-                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                    ))
-                        self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                    forward_comm = forward_comm2, forward_comm_size= 0,
                                     backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
                                     dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                     ))
@@ -465,20 +697,38 @@ class SIMAI_workload:
                 else:
                     forward_comm = "ALLREDUCE"
                     backward_comm = "ALLREDUCE"
-                    self.workload.append(
-                        Work_Item(
-                            name=name,
-                            forward_compute_time=forward_compute_time,
-                            forward_comm=forward_comm,
-                            forward_comm_size=forward_comm_size,
-                            backward_compute_time=default_compute_time,
-                            backward_comm=backward_comm,
-                            backward_comm_size=backward_comm_size,
-                            dp_compute_time=default_compute_time,
-                            dp_comm=dp_comm,
-                            dp_comm_size=dp_comm_size,
+                    if self.args.recompute_activations and 'attention' in name:
+                        forward_comm_size *= 2
+                    if "embedding" in name:
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=default_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=forward_comm_size,
+                                backward_compute_time=default_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
                         )
-                    )
+                    else:
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=default_compute_time,
+                                forward_comm=forward_comm,
+                                forward_comm_size=forward_comm_size,
+                                backward_compute_time=default_compute_time,
+                                backward_comm=backward_comm,
+                                backward_comm_size=backward_comm_size,
+                                dp_compute_time=default_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
             self.workload.append(
                 Work_Item(
                     name="embedding_norm",
@@ -528,10 +778,14 @@ class SIMAI_workload:
     def dump_file(self, filename):
         filename = filename + ".txt"
         with open(filename, "w") as f:
-            f.write(
-                f"HYBRID_TRANSFORMER_FWD_IN_BCKWD	model_parallel_NPU_group: {self.args.tp_num} checkpoints: 0 checkpoint_initiates: 0"
-                + "\n"
-            )
+            f.write((
+                f"HYBRID_TRANSFORMER_FWD_IN_BCKWD model_parallel_NPU_group: {self.args.tensor_model_parallel_size} "
+                f"ep: {self.args.expert_model_parallel_size} "
+                f"pp: {self.args.pipeline_model_parallel} "
+                f"ga: {self.ga_num} all_gpus: {self.args.world_size} "
+                f"checkpoints: 0 checkpoint_initiates: 0"
+            ) + "\n")
+
             f.write(str(len(self.workload)) + "\n")
             for item in self.workload:
                 f.write(
@@ -591,7 +845,9 @@ class simAI_MicroTest:
                     )
             else:
                 f.write(
-                    f"HYBRID_TRANSFORMER_FWD_IN_BCKWD	model_parallel_NPU_group: 8 checkpoints: 0 checkpoint_initiates: 0"
+                    f"HYBRID_TRANSFORMER_FWD_IN_BCKWD	model_parallel_NPU_group: {self.args.tensor_model_parallel_size} \
+                        expert_parallel_npu_group: {self.args.expert_model_parallel_size} pp: {self.args.pipeline_model_parallel} \
+                        ga: {self.ga_num} all_gpus: {self.args.world_size} checkpoints: 0 checkpoint_initiates: 0"
                     + "\n"
                 )
                 f.write(str(len(self.workload)) + "\n")
@@ -609,7 +865,7 @@ if __name__ == "__main__":
     result_dir = "results/workload/"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tp_num}-pp{args.pp_num}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-flash_attn-{args.use_flash_attn}"
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-MOE-{args.moe_enable}-GEMM-{args.moe_grouped_gemm}-flash_attn-{args.use_flash_attn}"
     filepath = os.path.join(result_dir, filename)
     params = model.parameters()
     # work = SIMAI_workload(model, args, GPU_Tensor_core.A100, "gpt13B")

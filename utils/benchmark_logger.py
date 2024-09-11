@@ -67,7 +67,10 @@ class BenchLogger:
                 elapsed_time_ms = self.timer.stop()
 
                 log_item = next((item for item in args if isinstance(item, LogItem)))
-                log_item.elapsed_time = elapsed_time_ms
+                if log_item.additional == 'overlap':
+                    log_item.elapsed_time = 0
+                else:
+                    log_item.elapsed_time = elapsed_time_ms
                 self.comm_log.add_comm_log(log_item)
                 if torch.distributed.get_rank() == 0:
                     logger.info(log_item.view_as_ds_log())
@@ -90,7 +93,8 @@ class BenchLogger:
         self.epoch_timer.start()
 
     def dump_log(self, filename):
-        self.comm_log.dump(filename)
+        csv_filename = self.comm_log.dump(filename)
+        return csv_filename
 
     def analyze_comm_log(self, print_fn=logger.info):
         return self.comm_log.analyze(print_fn)

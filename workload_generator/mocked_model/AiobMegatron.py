@@ -20,7 +20,7 @@ import math
 import scaled_upper_triang_masked_softmax_cuda
 from torch.cuda.amp import custom_bwd, custom_fwd
 from utils.utils import *
-
+from core import grouped_gemm_util as gg
 try:
     from einops import rearrange
 except ImportError as e:
@@ -51,7 +51,10 @@ class MegatronModel(torch.nn.Module):
             self.Attention = MegatronFlashAtten(self.args)
         else:
             self.Attention = MegatronAtten(self.args)
-        self.Mlp = MegatronMlp(self.args)
+        if self.args.moe_enable:
+            self.Mlp = MoELayer(self.args)
+        else:
+            self.Mlp = MegatronMlp(self.args)
         self.logit = logit(self.args)
         self.grad_param = Grad_param(self.args)
 
@@ -146,9 +149,10 @@ class MegatronModel(torch.nn.Module):
             _, param_time = self.grad_param._apply()
 
             self.time_list.setdefault("param_time", []).append({"time_gpu": param_time})
-
+        
         filepath = write_op(self.time_list, self.args)
         process_all_keys(filepath)
+        
         return filepath
 
 
@@ -175,7 +179,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
 
         if sequence_parallel:
 
-            total_input = input.repeat((tp, 1, 1))
+            total_input = input
         else:
             total_input = input
 
@@ -267,7 +271,7 @@ linear_with_grad_accumulation_and_async_allreduce.warned = False
 class MegatronEmbedding(torch.nn.Module):
     def __init__(self, args=None):
         super(MegatronEmbedding, self).__init__()
-        self.tp = args.tp_num
+        self.tp = args.tensor_model_parallel_size
         micro_batch = args.micro_batch
         seq_len = args.seq_length
         hidden_size = args.hidden_size
@@ -337,7 +341,7 @@ class MegatronEmbedding(torch.nn.Module):
 class MegatronLayernorm(torch.nn.Module):
     def __init__(self, args=None):
         super(MegatronLayernorm, self).__init__()
-        self.tp = args.tp_num
+        self.tp = args.tensor_model_parallel_size
         self.enable_sequence_parallel = args.enable_sequence_parallel
         hidden_size = args.hidden_size
         device = torch.cuda.current_device()
@@ -379,7 +383,7 @@ class MegatronAtten(torch.nn.Module):
     def __init__(self, args=None):
         super(MegatronAtten, self).__init__()
         self.enable_sequence_parallel = args.enable_sequence_parallel
-        self.tp = args.tp_num
+        self.tp = args.tensor_model_parallel_size
         micro_batch = args.micro_batch
         seq_len = args.seq_length
         hidden_size = args.hidden_size
@@ -513,7 +517,6 @@ class MegatronAtten(torch.nn.Module):
 
     @cuda_timing_decorator
     def _apply_QK(self, q, k):
-
         matmul_result = torch.baddbmm(
             self.matmul_input_buffer,
             q.transpose(0, 1),  # [b * np, sq, hn]
@@ -566,7 +569,7 @@ class MegatronAtten(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=False,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
         return output_parallel
@@ -575,6 +578,7 @@ class MegatronAtten(torch.nn.Module):
         qkv_out, qkv_time = self._apply_attenqkv(hideen_states)
 
         query_layer, key_layer, value_layer = qkv_out
+        
         output_size = (
             query_layer.size(1),
             query_layer.size(2),
@@ -596,8 +600,8 @@ class MegatronAtten(torch.nn.Module):
 class MegatronFlashAtten(torch.nn.Module):
     def __init__(self, args=None):
         super(MegatronFlashAtten, self).__init__()
-
-        self.tp = args.tp_num
+        self.enable_sequence_parallel = args.enable_sequence_parallel
+        self.tp = args.tensor_model_parallel_size
         micro_batch = args.micro_batch
         seq_len = args.seq_length
 
@@ -634,7 +638,7 @@ class MegatronFlashAtten(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=False,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
 
@@ -696,7 +700,7 @@ class MegatronFlashAtten(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=False,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
         return output_parallel
@@ -732,7 +736,8 @@ class MegatronFlashAtten(torch.nn.Module):
 class MegatronMlp(torch.nn.Module):
     def __init__(self, args=None):
         super(MegatronMlp, self).__init__()
-        self.tp = args.tp_num
+        self.tp = args.tensor_model_parallel_size
+        self.enable_sequence_parallel = args.enable_sequence_parallel
         micro_batch = args.micro_batch
         seq_len = args.seq_length
         self.add_bias_linear = False
@@ -793,7 +798,7 @@ class MegatronMlp(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=False,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
         return output_parallel
@@ -816,7 +821,7 @@ class MegatronMlp(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=False,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
         return output_parallel
@@ -831,7 +836,8 @@ class MegatronMlp(torch.nn.Module):
 class logit(torch.nn.Module):
     def __init__(self, args=None):
         super(logit, self).__init__()
-        self.tp = args.tp_num
+        self.enable_sequence_parallel = args.enable_sequence_parallel
+        self.tp = args.tensor_model_parallel_size
         micro_batch = args.micro_batch
         seq_len = args.seq_length
         vocab_size = args.padded_vocab_size
@@ -861,7 +867,7 @@ class logit(torch.nn.Module):
             bias=None,
             gradient_accumulation_fusion=True,
             async_grad_allreduce=True,
-            sequence_parallel=False,
+            sequence_parallel=self.enable_sequence_parallel,
             tp=self.tp,
         )
         return output_parallel
@@ -873,22 +879,220 @@ class logit(torch.nn.Module):
 
 class Grad_param:
     def __init__(self, args=None):
-        tp = args.tp_num
+        tp = args.tensor_model_parallel_size
         param = args.model_param
         self.dp = args.dp_num
 
         device = torch.cuda.current_device()
         dtype = torch.float32
-        self.data = torch.rand(param // tp, device=device).to(dtype)
+        self.data = torch.rand(param//tp, device=device).to(dtype)
 
     @cuda_timing_decorator
     def _apply(self):
 
         self.data /= self.dp
-
-        assert self.data.numel() % self.dp == 0
+        # assert self.data.numel() % self.dp == 0
         shard_size = self.data.numel() // self.dp
         sharded_buffer = [
             self.data[(r * shard_size) : ((r + 1) * shard_size)] for r in range(self.dp)
         ]
         return sharded_buffer
+class SequentialMLP(torch.nn.Module):
+    """An implementation of the Experts layer using a sequence of MLP layers.
+
+    This class executes each expert sequentially.
+    """
+
+    def __init__(self, num_local_experts,args=None):
+        super(SequentialMLP,self).__init__()
+        tp = args.tensor_model_parallel_size
+        ep = args.expert_model_parallel_size
+        num_experts = args.num_experts
+        micro_batch = args.micro_batch
+        seq_len = args.seq_length
+        topk = args.moe_router_topk
+        hidden_size = args.hidden_size
+        num_attention_heads = args.num_attention_heads
+        self.add_bias = False
+        # self.moe_extended_tp = config.moe_extended_tp
+        self.num_local_experts = num_local_experts
+        self.local_experts = torch.nn.ModuleList()
+        for _ in range(self.num_local_experts):
+            expert = MegatronMlp(args)
+            self.local_experts.append(expert)
+
+    def forward(self, permuted_local_hidden_states, tokens_per_expert):
+
+        output_local = torch.zeros_like(permuted_local_hidden_states)
+        output_bias_local = None
+        if self.add_bias:
+            output_bias_local = torch.zeros_like(permuted_local_hidden_states)
+
+        cumsum_num_tokens = torch.cumsum(tokens_per_expert, dim=0)
+        # Insert zero at the begining for offset index's convenience
+        zero_tensor = torch.zeros(1, dtype=torch.long, device=cumsum_num_tokens.device)
+        cumsum_num_tokens = torch.cat((zero_tensor, cumsum_num_tokens))
+        mlp_linear_1_all , mlp_gelu_all ,mlp_linear_2_all = 0 ,0 ,0
+        for expert_num, expert in enumerate(self.local_experts):
+            start = cumsum_num_tokens[expert_num]
+            end = cumsum_num_tokens[expert_num + 1]
+            
+            hidden = permuted_local_hidden_states[start:end]
+            # output, output_bias = expert(hidden)
+            output,mlp_linear_1,mlp_gelu,mlp_linear_2 = expert(hidden)
+
+            output_local[start:end] = output
+            mlp_linear_1_all += mlp_linear_1
+            mlp_gelu_all += mlp_gelu
+            mlp_linear_2_all += mlp_linear_2
+            if self.add_bias:
+                output_bias = output_bias.expand_as(output)
+                output_bias_local[start:end, :] = output_bias
+
+        return output_local, mlp_linear_1_all,mlp_gelu_all,mlp_linear_2_all
+class GroupedMLP(torch.nn.Module):
+    """An efficient implementation of the Experts layer using CUTLASS GroupedGEMM.
+
+    This class is designed to execute multiple experts in parallel, thereby maximizing computational efficiency.
+    """
+
+    def __init__(self, num_local_experts,args=None):
+        super(GroupedMLP,self).__init__()
+        self.num_local_experts = num_local_experts
+        gg.assert_grouped_gemm_is_available()
+        tp = args.tensor_model_parallel_size
+        self.hidden_size = args.hidden_size
+        self.expert_parallel = args.expert_model_parallel_size > 1
+        device = torch.cuda.current_device()
+        if args.dtype == "bfloat16":
+            dtype = torch.bfloat16
+        elif args.dtype == "float16":
+            dtype = torch.float16
+        else:
+            dtype = torch.float32
+        if args.openai_gelu:
+            self.activation_func = openai_gelu
+        elif args.onnx_safe:
+            self.activation_func = erf_gelu
+        elif args.swiglu:
+            def swiglu(x):
+                x = torch.chunk(x, 2, dim=-1)
+                
+                return F.silu(x[0]) * x[1]
+            self.activation_func = swiglu
+        elif args.squared_relu:
+            def squared_relu(x):
+                return torch.pow(F.relu(x), 2)
+            self.activation_func = squared_relu
+        else:
+            self.bias_gelu_fusion = args.bias_gelu_fusion
+            self.activation_func = F.gelu
+        # if args.gated_linear_unit:
+        #     def glu(x):
+        #         x = torch.chunk(x, 2, dim=-1)
+        #         return self.config.activation_func(x[0]) * x[1]
+
+        #     self.activation_func = glu
+        # else:
+        #     self.activation_func = self.activation_func
+
+        # How many feature each rank holds for fc1 and fc2, respectively.
+        # self.moe_extended_tp = config.moe_extended_tp
+        # if config.moe_extended_tp:
+        #     tp_size = parallel_state.get_tensor_and_expert_parallel_world_size()
+        # else:
+        #     tp_size = parallel_state.get_tensor_model_parallel_world_size()
+
+        fc1_output_size = args.ffn_hidden_size * self.num_local_experts
+        if args.gated_linear_unit:
+            # Project to 4h. If using swiglu double the output width,
+            # see https://arxiv.org/pdf/2002.05202.pdf
+            fc1_output_size *= 2
+        fc1_output_size_per_partition = divide(fc1_output_size, tp)
+
+        fc2_input_size = args.ffn_hidden_size * self.num_local_experts
+        fc2_input_size_per_partition = divide(fc2_input_size, tp)
+
+        # Note: The current kernel implementations of grouped_gemm
+        # does not support transposition with CUTLASS grouped GEMM
+        # (https://github.com/fanshiqing/grouped_gemm/blob/main/csrc/grouped_gemm.cu#L355-L358)
+        # and as a result we avoid allocate the transpose of weights.
+        # Initialize weight.
+        self.weight1 = torch.rand(self.hidden_size ,
+                                   fc1_output_size_per_partition,
+                                   device=device).to(dtype)
+        self.weight2 = torch.rand(fc2_input_size_per_partition, 
+                                   self.hidden_size ,
+                                   device=device).to(dtype)
+    @cuda_timing_decorator 
+    def _apply_Linear1(self,permuted_local_hidden_states,tokens_per_expert,w1):
+        
+        
+
+        fc1_output = gg.ops.gmm(
+            permuted_local_hidden_states, w1, tokens_per_expert, trans_b=False
+        )
+        return fc1_output
+    
+    @cuda_timing_decorator
+    def _apply_activation(self,fc1_output):
+
+        intermediate_parallel = self.activation_func(fc1_output)
+
+        return intermediate_parallel
+    
+    @cuda_timing_decorator
+    def _apply_Linear2(self,intermediate_parallel,tokens_per_expert,w2):
+
+        
+        fc2_output = gg.ops.gmm(intermediate_parallel, w2, tokens_per_expert, trans_b=False)
+
+        return fc2_output
+    def forward(self, permuted_local_hidden_states, tokens_per_expert):
+        w1 = self.weight1.view(self.num_local_experts, self.hidden_size, -1)
+        w2 = self.weight2.view(self.num_local_experts, -1, self.hidden_size )
+        l1_out,l1_time = self._apply_Linear1(permuted_local_hidden_states,tokens_per_expert,w1)
+        act_out,act_time = self._apply_activation(l1_out)
+        l2_out,l2_time = self._apply_Linear2(act_out,tokens_per_expert,w2)
+
+        return l2_out,l1_time,act_time,l2_time
+class MoELayer(torch.nn.Module):
+    def __init__(self,args=None):
+        super(MoELayer,self).__init__()
+        
+        ep = args.expert_model_parallel_size
+        num_experts = args.num_experts
+        micro_batch = args.micro_batch
+        seq_len = args.seq_length
+        topk = args.moe_router_topk
+        hidden_size = args.hidden_size
+        num_attention_heads = args.num_attention_heads
+        self.num_local_experts = int(num_experts / ep)
+        if args.dtype == "bfloat16":
+            dtype = torch.bfloat16
+        elif args.dtype == "float16":
+            dtype = torch.float16
+        else:
+            dtype = torch.float32
+        device = torch.cuda.current_device()
+        if args.moe_grouped_gemm:
+            self.experts = GroupedMLP(self.num_local_experts, args)
+        else:
+            self.experts = SequentialMLP(self.num_local_experts, args)
+        # print("aa",seq_len*micro_batch*topk*dp/num_experts*self.num_local_experts)
+        self.dispatched_input = torch.rand(int(seq_len*micro_batch*topk*ep/num_experts*self.num_local_experts), hidden_size
+                                  ,device = device).to(dtype)
+        temp_val = int(seq_len*micro_batch*topk*ep/num_experts)
+        # self.tokens_per_expert = torch.tensor([temp,temp],device = device)
+                                  
+        self.tokens_per_expert = torch.full((self.num_local_experts,), temp_val)
+        # print('aa',self.tokens_per_expert)
+    def forward(self, hidden_states: torch.Tensor):
+        # probs, indices = self.router(hidden_states)
+        # (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
+        #     hidden_states, probs, indices
+        # )
+        
+        expert_output, mlp_linear_1,mlp_gelu,mlp_linear_2 = self.experts(self.dispatched_input, self.tokens_per_expert)
+        # output, mlp_bias = self.token_dispatcher.token_unpermutation(expert_output, mlp_bias)
+        return expert_output,mlp_linear_1,mlp_gelu,mlp_linear_2

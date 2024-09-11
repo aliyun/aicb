@@ -36,7 +36,7 @@ When running on a physical machine, additional configuration for PyTorch-related
 ### Quick start for single-node execution
 The script for running AICB on a physical machine is：[/scripts/megatron_workload_with_aiob.sh](../scripts/megatron_workload_with_aiob.sh)
 
-We provide four pre-existing models (7/13/22/175)B to quickly launch and run on a physical machine, which can be specified using the parameter `--model_size`. Additionally, the Megatron parallel framework supports enabling the aiob_enable option to obtain the computation time for each operation of the actual model. Without using aiob, only fixed waiting times can be filled. Alternatively, when AIOB is enabled, you can specify `--comp_filepath` to fill in the corresponding computation time.
+We provide four pre-existing models (7/13/22/175/)B and moe to quickly launch and run on a physical machine, which can be specified using the parameter `--model_size`. Additionally, the Megatron parallel framework supports enabling the aiob_enable option to obtain the computation time for each operation of the actual model. Without using aiob, only fixed waiting times can be filled. Alternatively, when AIOB is enabled, you can specify `--comp_filepath` to fill in the corresponding computation time.
 Below is an example of generating a Workload with a model size of 13B, tp 8, pp 1, a total GPU count of 8, gbs 2, mbs 1, sequence length of 4096, with flash_attn and swiglu enabled, and using AIOB to obtain the computation time for each operation of the actual model.
 ``` bash
 export MASTER_ADDR=127.0.0.1
@@ -45,8 +45,8 @@ export WORLD_SIZE=1
 export RANK=0
 
 sh ./scripts/megatron_gpt.sh \
--m 13 --world_size 8 --tp_num 8 --pp_num 1 \
---comm_frame Megatron --global_batch 2  \
+-m 13 --world_size 8 --tensor_model_parallel_size 8 --pipeline_model_parallel 1 \
+--frame Megatron --global_batch 2  \
 --micro_batch 1 --seq_length 4096 \
 --swiglu --use_flash_attn  --aiob_enable  
 ```
@@ -61,6 +61,7 @@ Steps：
 pssh -i -h iplist -o out -e err -t 0 "cd /root/AICBench && python run_in_cluster.py"`
 The specific command to be run on each machine can be modified in the highlighted section:
 
+![Scaling Graph](../images/tutorial_7.png)
 ### Logs and Results
 After each communication is completed, the program will print the relevant logs for this communication. The output format is as follows and contains almost all the information about the communication operation:
 * communication type
@@ -78,22 +79,20 @@ After all communications are completed, information about the use case will be s
 First, distinguish between the model training phases: the init phase and the train phase. Then, summarize the collective communications performed in each phase, including their corresponding message sizes, frequencies, and specific average latencies, maximum and minimum values, etc. This helps to pinpoint which type of collective communication operation in which message segment is causing anomalies, facilitating further investigation and troubleshooting.
 ![Scaling Graph](../images/tutorial_3.png)
 #### File outputs
-The file outputs include two different types of files: .csv file and .pkl file.
+The file outputs include two different types of files: .csv file.
 1. The CSV files are saved in:
 `results/comm_logs/megatron_gpt_13B_8n_log.csv`,And you can also see the execution time, the execution phase, as well as the algorithmic bandwidth (algbw) and bus bandwidth (busbw) belonging to different comm_group and different comm_type.It also includes the computation time for each part of the model and the computation phase it belongs to.
 
 ![Scaling Graph](../images/tutorial_4.png)
 
-2. The .pkl files are saved in:
-`results/mocked_workload/megatron_gpt_13B_8n_workload.pkl,results/comm_logs/megatron_gpt_13B_8n_log.pkl`
-Inaddition to the aforementioned details, a .pkl file is provided for detailed analysis of the results. Here’s how to work with it:
-    1. Reading _workload.pkl Log:
-      * You can read the _workload.pkl log file by invoking log_analyzer.log.Workload.load(filename).
+Inaddition to the aforementioned details, a .csv file is provided for detailed analysis of the results. Here’s how to work with it:
+    1. Reading _workload.csv Log:
+      * You can read the _workload.csv log file by invoking log_analyzer.log.Workload.load(filename).
       * This will return Workload and args.
         * args contains the parameters used for training input.
         * Workload consists of the generated intermediate results.
-    2. Reading _log.pkl Log:
-    * You can read the _log.pkl log file by invoking log_analyzer.log.Log.load(filename).
+    2. Reading _log.csv Log:
+    * You can read the _log.csv log file by invoking log_analyzer.log.Log.load(filename).
     * This will return a Log object, containing:
       * comm_logs: List[LogItem]: This is a list of all generated logs.
       * epoch_times: List[int]: This lists the time taken for each iteration. The first iteration typically represents initialization, which might show different communication behavior compared to subsequent iterations, potentially leading to differences in time.
@@ -106,8 +105,8 @@ We provide four pre-existing models (7/13/22/175)B to quickly generate the corre
 Below is an example of generating a Workload with a model size of 7B, tp 4, pp 1, a total GPU count of 4096, gbs 8192, mbs 1, sequence length of 4096, with flash_attn, swiglu, and aiob enabled, and reading Example.txt as the computation time.
 ```bash
 sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
---world_size 4096 --tp_num 4 --pp_num 1 \
---comm_frame Megatron --global_batch 8192 \
+--world_size 4096 --tensor_model_parallel_size 4 --pipeline_model_parallel 1 \
+--frame Megatron --global_batch 8192 \
 --micro_batch 1 --seq_length 4096 --swiglu \
 --use_flash_attn  --aiob_enable \
 --comp_filepath workload/aiob_inputs/Example.txt
@@ -124,14 +123,13 @@ The main parameters for AICB are as follows:
 
 | Category                     | Parameter Name                   | Description                                                                 | 
 |------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
-| Name                         | comm_frame                        | DeepSpeed/Megatron                                                          |
-|                              | model_name                        | Llama/GPT/...                                                                   |
-| Training Parameters          | model_size                        | Use default model parameters (7/13/22/175)B                                 |
-|                              | world_size                        | Total number of GPUs                                                        |
+| Name                         | frame                             | DeepSpeed/Megatron                                                          |
+|                              | model_name                        | Llama/GPT/...                                                               |
+|Training Parameters           | world_size                        | Total number of GPUs                                                        |
 |                              | global_batch                      | Total batch size for training                                               |
 |                              | micro_batch                       | Batch size per model instance (local batch size).                           |
 |                              | epoch_num                         | Number of iterations                                                        |
-| Model parameters             | model_size                        | Model size (7/13/65/175/270)                                                |
+| Model parameters             | model_size                        | Model size (7/13/65/175/270)B and moe                                       |
 |                              | num_layers                        | Number of transformer layers.                                               |
 |                              | hidden_size                       | Transformer hidden size.                                                    |
 |                              | num_attention_heads               | Number of transformer attention heads.                                      |
@@ -139,22 +137,26 @@ The main parameters for AICB are as follows:
 |                              | vocab_size                        | Size of vocab before EOD or padding.                                        |
 |                              | max_position_embeddings           | Maximum number of position embeddings to use.                               |
 |                              | ffn_hidden_size                   | Transformer Feed-Forward Network hidden size.                               |
-| Megatron parallel parameters | tp_num                            | Degree of tensor model parallelism.                                         |
-|                              | pp_num                            | Degree of pipeline model parallelism.                                       |
+| Megatron parallel parameters | tensor_model_parallel_size        | Degree of tensor model parallelism.                                         |
+|                              | pipeline_model_parallel           | Degree of pipeline model parallelism.                                       |
 |                              | enable_sequence_parallel          | Enable sequence parallel optimization.                                      |
-| Megatron optimization parameters | use_flash_attn                   | Use FlashAttention implementation of attention.                             |
+| Megatron optimization parameters | use_flash_attn                | Use FlashAttention implementation of attention.                             |
 |                              | swiglu                            | Use gated linear units and SiLU activation instead of default gelu          |
 |                              | openai_gelu                       | Use OpenAI's GeLU implementation.                                           |
 |                              | onnx_safe                         | Use workarounds for known problems with Torch ONNX exporter                 |
 |                              | squared_relu                      | Use squared relu activation instead of default gelu                         |
 |                              | bias_gelu_fusion                  | Enable bias and gelu fusion.                                                |
 |                              | gated_linear_unit                 | Enable when use swiglu                                                      |
-| DeepSpeed parameters         | zero_stage,          | choose zero optimizer stage                                                       |reduce_bucket_size    |                                                                                                                            |
+| MoE                          | expert_model_parallel_size        | Degree of expert model parallelism                                          |
+|                              | moe_enable                        | Enable MoE                                                                  |
+|                              | num_experts                       | Number of Experts in MoE (None means no MoE)                                |
+|                              | moe_router_topk                   | Number of experts to route to for each token.                               |
+|                              | moe_grouped_gemm                  | When there are multiple experts per rank, compress multiple local (potentially small) gemms in a single kernel|
+| DeepSpeed parameters         | zero_stage,reduce_bucket_size     | choose zero optimizer stage                                                 |
 |                              | allgather_bucket_size             | Optimizes communication efficiency and memory usage during all-gather operations For stage 1/2 only                                                          |
 |                              | prefetch_bucket_size, param_persistence_threshold, model_persistence_threshold, max_live_parameters | For stage 3 only. Control the number of prefetch parameters. Control the size of all_gather and reduce_scatter |
 | Other                        | aiob_enable                       | Enable AIOB to obtain computation time                                      |
 |                              | comp_filepath                     | Use aiob_lib to get operation compute time                                  |
-   |
 
 ### Running on physical GPU clusters
 The current entry file for running custom cases is [aicb.py](../aicb.py). By using this file, you can flexibly choose more parameters for tuning.
@@ -166,7 +168,7 @@ torchrun \
 --nproc_per_node gpu \
 --master_addr ${MASTER_ADDR} \
 --master_port ${MASTER_PORT} \
-./aicb.py --comm_frame=DeepSpeed --stage=$stage \
+./aicb.py --frame=DeepSpeed --stage=$stage \
 --world_size=$((NNODES*8)) --global_batch=$global_batch --epoch_num=$epoch_num \
 --num_layers=$num_layers --hidden_size=$hidden_size \
 --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$attention_heads \
@@ -179,8 +181,21 @@ torchrun \
 --nproc_per_node gpu \
 --master_addr $MASTER_ADDR \
 --master_port $MASTER_PORT \
-./aicb.py --comm_frame=Megatron --world_size=$((WORLD_SIZE*8)) --tp_num=$tp_num \
-  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size/tp_num)) --epoch_num=$epoch_num --swiglu \
+./aicb.py --frame=Megatron --world_size=$((WORLD_SIZE*8)) --tensor_model_parallel_size=$tensor_model_parallel_size \
+  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size/tensor_model_parallel_size)) --epoch_num=$epoch_num --swiglu \
+  --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
+  $sp_enable --seq_len=$seq_len --vocab_size=$vocab_size --aiob_enable=$enable 
+
+# MoE Example
+torchrun \
+--nnodes $WORLD_SIZE \
+--node_rank $RANK \
+--nproc_per_node gpu \
+--master_addr $MASTER_ADDR \
+--master_port $MASTER_PORT \
+./aicb.py --frame=Megatron --world_size=$((WORLD_SIZE*8)) --tensor_model_parallel_size=$tensor_model_parallel_size --expert_model_parallel_size=$expert_model_parallel_size \
+--moe_enable=$moe_enable --num_experts=$num_experts --moe_router_topk=$moe_router_topk --moe_grouped_gemm=$moe_grouped_gemm \
+  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size/tensor_model_parallel_size)) --epoch_num=$epoch_num --swiglu \
   --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
   $sp_enable --seq_len=$seq_len --vocab_size=$vocab_size --aiob_enable=$enable 
 ```
@@ -191,9 +206,9 @@ By providing the detailed parameters of the model, you can generate a general-pu
 
 Here is an example:
 ```bash
-python -m workload_generator.generate_megatron_workload \
-  --model_name GPT-13B --comm_frame=Megatron \
-  --world_size=2048 --tp_num=2 --pp_num=1 --global_batch=16 \
+python -m workload_generator.AIOB_simAI_workload_generator \
+  --model_name GPT-13B --frame=Megatron \
+  --world_size=16 --tensor_model_parallel_size=2 --pipeline_model_parallel=1 --global_batch=16 \
   --micro_batch=1   --num_layers=40 --seq_length=2048 \
   --hidden_size=5120 --epoch_num=1 \
   --use-distributed-optimizer --num_attention_heads=40 \
@@ -271,7 +286,7 @@ Here is a brief example of training process and workload item:
 ```python
 trainer.init()
 for _ in range(epoch_num):
-    if pp_num > 1:
+    if pipeline_model_parallel > 1:
         trainer.with_pipeline_forward_backward()
     else:
         for _ in range(num_microbatches):

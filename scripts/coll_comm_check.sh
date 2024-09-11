@@ -7,7 +7,7 @@ end_size=8589934592
 epoch_num=1
 iter_num=500
 test_comm=all_reduce
-comm_frame=collective_test
+frame=collective_test
 model_name=all_reduce
 multi_all_reduce_enable=0
 
@@ -48,10 +48,6 @@ done
 
 
 script="./aicb.py"
-which numarun
-if [[ $? -eq 0 ]]; then
-    script="--no-python numarun python ./aicb.py"
-fi
 
 if [ "$multi_all_reduce_enable" -eq 0 ]; then
     echo  "torchrun \
@@ -62,7 +58,7 @@ if [ "$multi_all_reduce_enable" -eq 0 ]; then
     --master_port $MASTER_PORT \
     $script --iter_num=$iter_num --world_size=$((WORLD_SIZE*8))\
     --begin_size=$begin_size --end_size=$end_size --test_comm=$test_comm --model_name=$model_name\
-    --comm_frame=standard_check --multi_all_reduce_enable=$multi_all_reduce_enable"
+    --frame=standard_check --multi_all_reduce_enable=$multi_all_reduce_enable"
 else
    echo  "torchrun \
     --nnodes $WORLD_SIZE \
@@ -72,7 +68,7 @@ else
     --master_port $MASTER_PORT \
     $script --iter_num=$iter_num --world_size=$((WORLD_SIZE*8))\
     --begin_size=$begin_size --end_size=$end_size --test_comm=$test_comm --model_name=$model_name\
-    --comm_frame=standard_check --multi_all_reduce_enable=$multi_all_reduce_enable --pp_num=$WORLD_SIZE"
+    --frame=standard_check --multi_all_reduce_enable=$multi_all_reduce_enable --pipeline_model_parallel=$WORLD_SIZE"
 fi 
 
 if [ "$multi_all_reduce_enable" -eq 0 ]; then
@@ -84,7 +80,7 @@ if [ "$multi_all_reduce_enable" -eq 0 ]; then
     --master_port $MASTER_PORT \
     $script --iter_num=$iter_num --world_size=$((WORLD_SIZE*8))\
     --begin_size=$begin_size --end_size=$end_size --test_comm=$test_comm --model_name=$model_name\
-    --comm_frame=collective_test --multi_all_reduce_enable=$multi_all_reduce_enable 
+    --frame=collective_test --multi_all_reduce_enable=$multi_all_reduce_enable 
 else
     torchrun \
     --nnodes $WORLD_SIZE \
@@ -94,5 +90,5 @@ else
     --master_port $MASTER_PORT \
     $script --iter_num=$iter_num --world_size=$((WORLD_SIZE*8))\
     --begin_size=$begin_size --end_size=$end_size --test_comm=$test_comm --model_name=$model_name\
-    --comm_frame=collective_test --multi_all_reduce_enable=$multi_all_reduce_enable --pp_num=$WORLD_SIZE
+    --frame=collective_test --multi_all_reduce_enable=$multi_all_reduce_enable --pipeline_model_parallel=$WORLD_SIZE
 fi

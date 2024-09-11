@@ -64,7 +64,7 @@ class Collective_Test(WorkloadGenerator):
                         LogItem(
                             comm_type=test_comm,
                             comm_group=CommGroup.pp_group,
-                            comm_group_size=self.args.pp_num,
+                            comm_group_size=self.args.pipeline_model_parallel,
                             msg_size=curr_size,
                             stage="test_step",
                         )
@@ -77,4 +77,4 @@ if __name__ == "__main__":
     workload_generator = Collective_Test(args, None)
     workload = workload_generator()
     filename = "multi_all_reduce.csv"
-    workload.dump(args, filename)
+    workload.dump(filename)

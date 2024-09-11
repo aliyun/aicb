@@ -14,7 +14,7 @@ limitations under the License.
 #!/bin/python
 """example of running megatron on gpt-7B
 python -m workload_generator.megatron_workload \
-  --comm_frame=Megatron --world_size=16 --tp_num=8 --pp_num=1 --global_batch=64 --micro_batch=2 \
+  --frame=Megatron --world_size=16 --tensor_model_parallel_size=8 --pipeline_model_parallel=1 --global_batch=64 --micro_batch=2 \
   --num_layers=32 --seq_length=2048 --hidden_size=4096 --epoch_num=2 --use-distributed-optimizer --enable_sequence_parallel
 """
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter
@@ -29,7 +29,7 @@ class MegatronWorkload(WorkloadGenerator):
         super().__init__(args, model)
         self.name = "megatron"
         self.args = args
-        self.tp_is_enable = True if args.tp_num > 1 else False
+        self.tp_is_enable = True if args.tensor_model_parallel_size > 1 else False
         # print(f"total params: {self._get_total_params()}")
 
     def _get_total_params(self):
@@ -66,12 +66,12 @@ class MegatronWorkload(WorkloadGenerator):
                     stage="init.model_setup",
                 )
             )
-            if args.pp_num > 1:
+            if args.pipeline_model_parallel > 1:
                 self.workload.append(
                     LogItem(
                         comm_type=CommType.all_reduce,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=self.args.pp_num,
+                        comm_group_size=self.args.pipeline_model_parallel,
                         msg_size=1 * 8,
                         stage="init.model_setup",
                     )
@@ -91,20 +91,20 @@ class MegatronWorkload(WorkloadGenerator):
             LogItem(
                 comm_type=CommType.broadcast,
                 comm_group=CommGroup.tp_group,
-                comm_group_size=self.args.tp_num,
+                comm_group_size=self.args.tensor_model_parallel_size,
                 msg_size=3 * 8,
                 stage="init.model_setup",
                 src=0,
             )
         )
 
-        if args.pp_rank == args.pp_num - 1 and args.pp_num > 1:
+        if args.pp_rank == args.pipeline_model_parallel - 1 and args.pipeline_model_parallel > 1:
             for p in self.model.embedding.parameters():
                 self.workload.append(
                     LogItem(
                         comm_type=CommType.all_reduce,
                         comm_group=CommGroup.tp_group,
-                        comm_group_size=self.args.tp_num,
+                        comm_group_size=self.args.tensor_model_parallel_size,
                         msg_size=p.msg_size(),
                         stage="init.model_setup",
                     )
@@ -129,9 +129,9 @@ class MegatronWorkload(WorkloadGenerator):
         args = self.args
         rank = torch.distributed.get_rank()
         world_size = args.world_size
-        pp_rank = self.get_pp_rank(rank, world_size, args.pp_num)
+        pp_rank = self.get_pp_rank(rank, world_size, args.pipeline_model_parallel)
         pp_num_warmup_microbatches = min(
-            args.pp_num - pp_rank - 1, args.num_microbatches
+            args.pipeline_model_parallel - pp_rank - 1, args.num_microbatches
         )
         num_microbatches_remaining = args.num_microbatches - pp_num_warmup_microbatches
         temp = self.model.forward()
@@ -155,7 +155,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=5 * 8,
                     stage="forward_step",
                     src=0,
@@ -165,7 +165,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=8 * (args.world_size + args.seq_length * args.micro_batch),
                     stage="forward_step",
                     src=0,
@@ -175,7 +175,7 @@ class MegatronWorkload(WorkloadGenerator):
             # for item in forward_comm:
             self.workload.extend(self.model.forward())
 
-            if pp_rank != args.pp_num - 1:
+            if pp_rank != args.pipeline_model_parallel - 1:
                 # send_next
                 self.workload.append(
                     LogItem(
@@ -208,7 +208,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=5 * 8,
                     stage="forward_step",
                     src=0,
@@ -218,7 +218,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=8 * (args.world_size + args.seq_length * args.micro_batch),
                     stage="forward_step",
                     src=0,
@@ -226,7 +226,7 @@ class MegatronWorkload(WorkloadGenerator):
             )
 
             self.workload.extend(self.model.forward())
-            if pp_rank != args.pp_num - 1:
+            if pp_rank != args.pipeline_model_parallel - 1:
                 # recv next
                 self.workload.append(
                     LogItem(
@@ -295,7 +295,7 @@ class MegatronWorkload(WorkloadGenerator):
 
         for _ in range(pp_num_warmup_microbatches):
             # recv next
-            if pp_rank != args.pp_num - 1:
+            if pp_rank != args.pipeline_model_parallel - 1:
                 self.workload.append(
                     LogItem(
                         comm_type=CommType.irecv,
@@ -331,7 +331,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=5 * 8,
                     stage="forward_step",
                     src=0,
@@ -341,7 +341,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.broadcast,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=8 * (args.world_size + args.seq_length * args.micro_batch),
                     stage="forward_step",
                     src=0,
@@ -354,7 +354,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.all_reduce,
                     comm_group=CommGroup.tp_group,
-                    comm_group_size=self.args.tp_num,
+                    comm_group_size=self.args.tensor_model_parallel_size,
                     msg_size=args.micro_batch * args.seq_length * 4,
                     stage="forward_step._VocabParallelCrossEntropy",
                 )
@@ -382,7 +382,7 @@ class MegatronWorkload(WorkloadGenerator):
                     comm_type=CommType.reduce_scatter,
                     comm_group=CommGroup.dp_group,
                     comm_group_size=self.args.dp_num,
-                    msg_size=4 * self._get_total_params() // (args.pp_num),
+                    msg_size=4 * self._get_total_params() // (args.pipeline_model_parallel),
                     stage="step",
                 )
             )
@@ -391,7 +391,7 @@ class MegatronWorkload(WorkloadGenerator):
                     comm_type=CommType.all_gather,
                     comm_group=CommGroup.dp_group,
                     comm_group_size=self.args.dp_num,
-                    msg_size=2 * self._get_total_params() // (args.pp_num),
+                    msg_size=2 * self._get_total_params() // (args.pipeline_model_parallel),
                     stage="step",
                 )
             )
@@ -402,7 +402,7 @@ class MegatronWorkload(WorkloadGenerator):
                     comm_type=CommType.all_reduce,
                     comm_group=CommGroup.dp_group,
                     comm_group_size=self.args.dp_num,
-                    msg_size=4 * self._get_total_params() // (args.pp_num),
+                    msg_size=4 * self._get_total_params() // (args.pipeline_model_parallel),
                     stage="step.finish_grad_sync",
                 )
             )
@@ -411,8 +411,8 @@ class MegatronWorkload(WorkloadGenerator):
             LogItem(
                 comm_type=CommType.all_reduce,
                 comm_group=CommGroup.tp_group,
-                comm_group_size=self.args.tp_num,
-                msg_size=2 * self._get_layernorm_params() // (args.pp_num),
+                comm_group_size=self.args.tensor_model_parallel_size,
+                msg_size=2 * self._get_layernorm_params() // (args.pipeline_model_parallel),
                 stage="step._allreduce_layernorm_grads",
             )
         )
@@ -421,7 +421,7 @@ class MegatronWorkload(WorkloadGenerator):
             LogItem(
                 comm_type=CommType.all_reduce,
                 comm_group=CommGroup.tp_group,
-                comm_group_size=self.args.tp_num,
+                comm_group_size=self.args.tensor_model_parallel_size,
                 msg_size=4,
                 stage="step.check_for_nan",
             )
@@ -434,5 +434,5 @@ if __name__ == "__main__":
     workload_generator = MegatronWorkload(args, model)
     workload = workload_generator()
     filename = f"results/mocked_workload/pp_rank{args.pp_rank}_local_megatron.csv"
-    workload.dump(args, filename)
+    workload.dump(filename)
     # WorkloadWriter.write_workload(workload, args, filename)
