@@ -55,8 +55,8 @@ def calc_bw_log(comm_type: CommType, size, duration,group_size):  # size: Bytes;
     else:  # [CommType.broadcast, CommType.reduce, "gather", "scatter"]
         tput = size / duration
         busbw = tput
-    tput /= 1e6
-    busbw /= 1e6
+    tput /= 1024*1024
+    busbw /= 1024*1024
     tput = round(tput, 2)
     busbw = round(busbw, 2)
     return tput, busbw

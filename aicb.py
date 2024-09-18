@@ -24,7 +24,6 @@ from workload_generator.generate_megatron_workload import MegatronWorkload
 from workload_generator.generate_collective_test import Collective_Test
 from workload_applyer import WorkloadApplyer
 from utils.utils import *
-from visualize.generate import visualize_output
 
 if __name__ == "__main__":
     args = get_args()
@@ -74,7 +73,12 @@ if __name__ == "__main__":
             bench_logger.analyze_comm_time()
         csv_filename = bench_logger.dump_log(filename)
         if args.enable_visual:
-            visualize_output(csv_filename,False)
+            try:
+                from visualize import visualize_output
+                visualize_output(csv_filename,False)
+            except ImportError: 
+                print("visualize_output is not available because required library is not found")
+
         print(
             f"total time for {args.frame} and {args.epoch_num} iterations is {cpu_time:.4f} s"
         )
