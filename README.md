@@ -1,3 +1,8 @@
+# Access AICB 
+You can access AICB on **GitHub** via  [**AICB@github**](https://github.com/aliyun/aicb)
+
+You can also access AICB on **Gitee** via [**AICB@gitee**](https://gitee.com/ali-ais-hpn/aicb)
+
 # Lastest News
 [2024/9] AICB Version 1.1 Released.
 This version brings the following changes:
