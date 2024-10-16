@@ -58,7 +58,7 @@ AICB (Artificial Intelligence Communication Benchmark), is a novel benchmark sui
 There are a lot of parameters that influence the communication and computation patterns, which are (1) model parameters (e.g., hidden_size, num_layers, seq_len, etc.) and (2) framework parameters (e.g., world size, parallelization strategies (TP, PP, DP, SP), zero level, reduce_bucket_size/allgather_bucket_size, etc.).
 For the sake of generality, we cover those typical settings using a smallest set of benchmarks rather than traversing all the combinations. To this end, we propose the benchmark suite as listed in the following table.
 **Users can directly run all the selected workloads selected in AICB, or run part of the workloads, or even generate their own workloads.**
-For more detailed information, please refer to [AICB_workload spec v1.1](workload/Workload_spec_v1.0.csv).
+For more detailed information, please refer to [AICB_workload spec v1.1](workload/Workload_spec_v1.1.csv).
 | id  | Name      | Parameter_size | Hidden_size | Num_of_layers| TP              | PP              | ZERO_Stage      |Framework      |
 |-----|-----------|----------------|-------------|--------------|-----------------|-----------------|-----------------|---------------|
 | 1   | GPT_7B    | 7B             | 4096        | 32           | 1               | 1               | -               |Megatron       |
