@@ -62,23 +62,24 @@ if __name__ == "__main__":
             print("comp_filepath:", args.comp_filepath)
             compute_cache = extract_averages(args.comp_filepath)
         workload = Comp_with_aiob(workload, compute_cache)
-    applyer = WorkloadApplyer(workload=workload, args=args)
     if torch.distributed.get_rank() == 0:
         filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"
         workload.dump(filename)
-    cpu_time = applyer.apply_workload()
-    if torch.distributed.get_rank() == 0:
-        bench_logger.analyze_comm_log()
-        if args.frame != "collective_test":
-            bench_logger.analyze_comm_time()
-        csv_filename = bench_logger.dump_log(filename)
-        if args.enable_visual:
-            try:
-                from visualize import visualize_output
-                visualize_output(csv_filename,False)
-            except ImportError: 
-                print("visualize_output is not available because required library is not found")
+    if not args.workload_only :
+        applyer = WorkloadApplyer(workload=workload, args=args)
+        cpu_time = applyer.apply_workload()
+        if torch.distributed.get_rank() == 0:
+            bench_logger.analyze_comm_log()
+            if args.frame != "collective_test":
+                bench_logger.analyze_comm_time()
+            csv_filename = bench_logger.dump_log(filename)
+            if args.enable_visual:
+                try:
+                    from visualize.generate import visualize_output
+                    visualize_output(csv_filename,False)
+                except ImportError: 
+                    print("visualize_output is not available because required library is not found")
 
-        print(
-            f"total time for {args.frame} and {args.epoch_num} iterations is {cpu_time:.4f} s"
-        )
+            print(
+                f"total time for {args.frame} and {args.epoch_num} iterations is {cpu_time:.4f} s"
+            )

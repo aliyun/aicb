@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import os
+import os,math
 import pickle
 import csv
 import dataclasses
@@ -80,31 +80,34 @@ class LogItem:
         return "None"
 
 
-def _print_stage_log(
-    stage_name: str,
-    stage_count: int,
-    comm_type_info: Dict,
-    primary_key: List[str],
-    agg_key: List[str],
-    performance_key: List[str],
-):
-    log_str = ""
+def _print_stage_log(stage_name: str, stage_count: int, comm_type_info: Dict, primary_key: List[str], agg_key: List[str], performance_key: List[str], busbw_key: List[str]):
+    header = f"{'Comm_Type':<15} {'Comm_Group':<12} {'Message_Size':<12} {'Count':<12} {'Avg_Elapsed_Time ± Std ':<24} {'Avg_BusBw ± Std':<24}\n"
+    separator = "-" * len(header) + "\n"
+    log_str = separator + header + separator
+
     for pkey in sorted(comm_type_info.keys()):
-        log_str += f"stage: {stage_name}"
+        row_str = ""
+        values = {}
         for i, pkey_name in enumerate(primary_key):
             value = pkey[i] if pkey_name != "msg_size" else convert_size_to_msg(pkey[i])
-            log_str += f" | {pkey_name}: {value}"
+            values[pkey_name] = value
         for key in agg_key:
             value = comm_type_info[pkey][key]
             value = convert_size_to_msg(value) if key == "msg_size" else f"{value:.2f}"
-            log_str += f" | {key}: {value}"
+            values[key] = value
         for key in performance_key:
             performance_value_list = sorted(comm_type_info[pkey][key])
-            log_str += f" | {key}: {np.mean(performance_value_list):.2f}±{np.std(performance_value_list):.2f}"
-            log_str += f" | min{key}: {performance_value_list[0]:.2f}"
-            log_str += f" | max{key}: {performance_value_list[-1]:.2f}"
-            log_str += f" | p90{key}: {performance_value_list[-len(performance_value_list)//9]:.2f}"
-        log_str += "\n"
+            values[f'avg_{key}'] = f"{np.mean(performance_value_list):.2f}±{np.std(performance_value_list):.2f}"
+            values[f'min_{key}'] = f"{performance_value_list[0]:.2f}"
+            values[f'max_{key}'] = f"{performance_value_list[-1]:.2f}"
+        
+        for key in busbw_key:
+            busbw_value_list = sorted(comm_type_info[pkey][key])
+            values[f'avg_{key}'] = f"{np.mean(busbw_value_list):.2f}±{np.std(busbw_value_list):.2f}"
+
+        row_str += f"{values['comm_type']:<15} {values['comm_group']:<12} {values['msg_size']:<12} {values['count']:<16} {values['avg__elapsed_time']:<24} {values['avg_busbw']:<18}\n"
+        log_str += row_str
+
     return log_str
 
 
@@ -115,14 +118,18 @@ def _analyze_stage_log(comm_log: List[Dict], stage: str, comm_info: Dict[str, Di
         primary_key: List[str],
         agg_key: List[str],
         performance_key: List[str],
+        busbw_key: List[str],
     ):
         primary_key = tuple(log[key] for key in primary_key)
         if primary_key not in info_dict:
             info_dict[primary_key] = dict((key, 0) for key in agg_key)
             info_dict[primary_key].update(dict((key, []) for key in performance_key))
+            info_dict[primary_key].update(dict((key, []) for key in busbw_key))
         for key in agg_key:
             info_dict[primary_key][key] += log[key]
         for key in performance_key:
+            info_dict[primary_key][key].append(log[key])
+        for key in busbw_key:
             info_dict[primary_key][key].append(log[key])
 
     if stage not in comm_info:
@@ -144,6 +151,7 @@ def _analyze_stage_log(comm_log: List[Dict], stage: str, comm_info: Dict[str, Di
                 ["comm_type", "comm_group"],
                 ["count", "msg_size"],
                 ["_elapsed_time"],
+                ["busbw"],
             )
             __update_info(
                 detailed_comm_type_info,
@@ -151,6 +159,7 @@ def _analyze_stage_log(comm_log: List[Dict], stage: str, comm_info: Dict[str, Di
                 ["comm_type", "comm_group", "msg_size"],
                 ["count"],
                 ["_elapsed_time"],
+                ["busbw"],
             )
 
 
@@ -179,34 +188,13 @@ class Log:
         for e_log in self.comm_log_each_epoch[1:]:
             _analyze_stage_log(e_log, "train", comm_info)
         for stage in comm_info.keys():
-            stage_count = comm_info[stage]["count"]
-            comm_type_info = comm_info[stage]["comm_type_info"]
-            detailed_comm_type_info = comm_info[stage]["detailed_comm_type_info"]
-            print_fn(
-                f"---------------------------------------------\ngeneral comm info for stage {stage}"
-            )
-            log_str = _print_stage_log(
-                stage,
-                stage_count,
-                comm_type_info,
-                ["comm_type", "comm_group"],
-                ["count", "msg_size"],
-                ["_elapsed_time"],
-            )
-            print_fn(log_str)
+            if stage != "init":   
+                stage_count = comm_info[stage]["count"]
+                comm_type_info = comm_info[stage]["comm_type_info"]
+                detailed_comm_type_info = comm_info[stage]["detailed_comm_type_info"]
 
-            print_fn(
-                f"---------------------------------------------\ndetailed comm info for stage {stage}"
-            )
-            log_str = _print_stage_log(
-                stage,
-                stage_count,
-                detailed_comm_type_info,
-                ["comm_type", "comm_group", "msg_size"],
-                ["count"],
-                ["_elapsed_time"],
-            )
-            print_fn(log_str)
+                log_str = _print_stage_log(stage, stage_count, detailed_comm_type_info, ["comm_type", "comm_group", "msg_size"], ["count"], ["_elapsed_time"], ["busbw"])
+                print_fn(f"\n\tDetailed comm info for AICB {stage} stage\n{log_str}")
         return comm_info
 
     def dump(self, filename):
@@ -234,9 +222,6 @@ class Log:
         return self.epoch_times
 
     def analyze_time(self, print_fn=print):
-        print_fn(f"--------------------------------------------------------")
-        print_fn("result for epoch time ")
-        print_fn(f"init time is {self.epoch_times[0]:.2f}")
         self.epoch_times.pop(0)
         max_val = max(self.epoch_times)
         min_val = min(self.epoch_times)
@@ -245,17 +230,17 @@ class Log:
         variance = sum((x - mean_val) ** 2 for x in self.epoch_times) / len(
             self.epoch_times
         )
+        variance = math.sqrt(variance)
 
         sorted_list = sorted(self.epoch_times)
         p90_val = sorted_list[int(len(sorted_list) * 0.9)]
         p99_val = sorted_list[int(len(sorted_list) * 0.99)]
-
-        print_fn(f"max iteration time {max_val:.2f}")
-        print_fn(f"min iteration time {min_val:.2f}")
-        print_fn(f"avg iteration time {mean_val:.2f}")
-        print_fn(f"p90 iteration time {p90_val:.2f}")
-        print_fn(f"p99 iteration time {p99_val:.2f}")
-        print_fn(f"iteration time variance {variance:.2f}")
+        header = f"{'Init time':<18} {'Max iteration time':<20} {'Min iteration time':<20} {'Avg iteration time':<20} {'P90 iteration time ':<20} {'Iteration time Std ':<20}\n"
+        separator = "-" * len(header) + "\n"
+        log_str = separator + header + separator 
+        iteration_result = f"{self.epoch_times[0]:<18.2f} {max_val:<20.2f} {min_val:<20.2f} {mean_val:<20.2f} {p90_val:<20.2f} {variance:<20.2f}\n"
+        log_str += iteration_result
+        print_fn(f"\n\tDetailed info for AICB iteration time\n{log_str}")
 
 
 class Workload:
@@ -304,6 +289,7 @@ class Workload:
             f.write(self.workload[0].csv_header() + "\n")
             for log_item in self.workload:
                 f.write(log_item.view_as_csv_line() + "\n")
+        print(f"Workload file generated:{csv_filename}")
         
     @staticmethod
     def load(filename):

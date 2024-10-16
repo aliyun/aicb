@@ -537,6 +537,7 @@ def get_params():
         action="store_true",
         help="Enable visualization",
     )
+    parser.add_argument("--workload_only", action="store_true", help="Only generate workload")
     get_model_params(parser)
     get_ds_params(parser)
     get_megatron_params(parser)

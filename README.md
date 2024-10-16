@@ -1,8 +1,7 @@
-# Access AICB 
+# Access AICB
 You can access AICB on **GitHub** via  [**AICB@github**](https://github.com/aliyun/aicb)
 
 You can also access AICB on **Gitee** via [**AICB@gitee**](https://gitee.com/ali-ais-hpn/aicb)
-
 # Lastest News
 [2024/9] AICB Version 1.1 Released.
 This version brings the following changes:
@@ -24,6 +23,7 @@ Bug Fixes
 
 # Table of Contents
 
+- [Access AICB](#access-aicb)
 - [Lastest News](#lastest-news)
 - [Table of Contents](#table-of-contents)
 - [AICB Overview](#aicb-overview)
@@ -58,19 +58,18 @@ AICB (Artificial Intelligence Communication Benchmark), is a novel benchmark sui
 There are a lot of parameters that influence the communication and computation patterns, which are (1) model parameters (e.g., hidden_size, num_layers, seq_len, etc.) and (2) framework parameters (e.g., world size, parallelization strategies (TP, PP, DP, SP), zero level, reduce_bucket_size/allgather_bucket_size, etc.).
 For the sake of generality, we cover those typical settings using a smallest set of benchmarks rather than traversing all the combinations. To this end, we propose the benchmark suite as listed in the following table.
 **Users can directly run all the selected workloads selected in AICB, or run part of the workloads, or even generate their own workloads.**
-For more detailed information, please refer to [AICB_workload spec v1.0](workload/Workload_spec_v1.0.csv).
-| id  | Name      | Parameter_size | Hidden_size | Num_of_layers | Attention_heads | Sequence_length | FFN_hidden_size |
-|-----|-----------|----------------|-------------|---------------|-----------------|-----------------|-----------------|
-| 1   | GPT_7B    | 7B             | 4096        | 32            | 32              | 2048            | 16384           |
-| 2   | GPT_13B   | 13B            | 5120        | 40            | 32              | 2048            | 20480           |
-| 3   | GPT_22B   | 22B            | 6144        | 48            | 64              | 2048            | 24576           |
-| 4   | GPT_175B  | 175B           | 12288       | 96            | 96              | 2048            | 49152           |
-| 5   | GPT_13B   | 13B            | 5120        | 40            | 32              | 2048            | 20480           |
-| 6   | LLaMA_7B  | 7B             | 4096        | 32            | 32              | 4096            | 11008           |
-| 7   | LLaMA_7B  | 7B             | 4096        | 32            | 32              | 4096            | 11008           |
-| 8   | LLaMA_65B | 65B            | 8192        | 80            | 64              | 4096            | 28672           |
-| 9   | LLaMA_65B | 65B            | 8192        | 80            | 64              | 4096            | 28672           |
-| 10   | Mistral_8*7B | 56B            | 4096        | 32            | 32              | 1024            | 14336           |
+For more detailed information, please refer to [AICB_workload spec v1.1](workload/Workload_spec_v1.0.csv).
+| id  | Name      | Parameter_size | Hidden_size | Num_of_layers| TP              | PP              | ZERO_Stage      |Framework      |
+|-----|-----------|----------------|-------------|--------------|-----------------|-----------------|-----------------|---------------|
+| 1   | GPT_7B    | 7B             | 4096        | 32           | 1               | 1               | -               |Megatron       |
+| 2   | GPT_13B   | 13B            | 5120        | 40           | 2               | 1               | -               |Megatron       |
+| 3   | GPT_22B   | 22B            | 6144        | 48           | 4               | 1               | -               |Megatron       |
+| 4   | LLaMA_65B | 65B            | 8192        | 80           | 8               | 2               | -               |Megatron       |
+| 5   | GPT_175B  | 175B           | 12288       | 96           | 8               | 8               | -               |Megatron       |
+| 6   | Mistral_8*7B | 56B            | 4096        | 32           | 2              | 1             | -               |Megatron       |
+| 7   | Llama_405B | 405B          | 16384       | 126          | 8               | 16              | -               |Megatron       |
+| 8   | LLaMA_7B  | 7B             | 4096        | 32           | 1               | 1               | 2               |DeepSpeed      |
+| 9   | LLaMA_65B | 65B            | 8192        | 80           | 1               | 1               | 3               |DeepSpeed      |
 
 
 # Setup

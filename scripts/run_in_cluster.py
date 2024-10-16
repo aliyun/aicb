@@ -48,11 +48,7 @@ command = f"""docker run --name aicb_test --gpus all --privileged \
 -e MASTER_ADDR={MASTER_ADDR} \
 -e MASTER_PORT={MASTER_PORT} \
 -v {AICB_DIR}:/workspace/{AICB_DIR_base} \
-{IMAGE_NAME} /bin/sh -c 'cd /workspace/LLM_workload && pwd && sh ./scripts/megatron_gpt.sh \
--m 13 --world_size 8 --tensor_model_parallel_size 8 --pipeline_model_parallel 1 \
---frame Megatron --global_batch 2  \
---micro_batch 1 --seq_length 4096 \
---swiglu --use_flash_attn  --aiob_enable '
+{IMAGE_NAME} /bin/sh -c 'cd /workspace/LLM_workload && pwd && python run_suites.py '
 """
 ret = subprocess.run(command, shell=True)
 print(ret)

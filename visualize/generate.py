@@ -16,11 +16,14 @@ colors_group = {
     "tp_group": "#376AB3",
     "dp_group": "#87C0CA",
     "ep_group": "#E8EDB9" ,
+    "pp_group": "#8cc540" ,
     "all_reduce": "#376AB3",
     "broadcast": "#87C0CA",
     "all_gather": "#E8EDB9"  ,
     "reduce_scatter": "#8cc540",
-    "all_to_all":"#009f5d"
+    "all_to_all":"#009f5d", 
+    "isend":   "#A9A9A9" ,
+    "irecv":    "#FFD700"
 }
 def parse_msg_size(msg_size_str: str) -> float:
     try:
@@ -521,6 +524,9 @@ def visualize_output(filepath,only_workload:bool):
 
     rendered_html = template.render(**context)
     # write to file
+    default_folder_path = 'results/visual_output' 
+    if not os.path.exists(default_folder_path):
+        os.makedirs(default_folder_path, exist_ok=True)
     filename = os.path.basename(filepath).split(".")[0]+'.html'
     output_file = os.path.join('results/visual_output',filename)
     with open(output_file, 'w', encoding='utf-8') as f:

@@ -25,6 +25,7 @@ max_position_embeddings=4096
 num_experts=1
 moe_enable=
 enable_visual=
+workload_only=
 usage() {
   echo "Usage: \$0 [options]
     options:
@@ -41,6 +42,7 @@ usage() {
       --num_attention_heads     Number of attention heads: $num_attention_heads
       --aiob_enable             Enable AIOB: $aiob_enable
       --enable_visual           Enable Visualization $enable_visual 
+      --workload_only           generate workload only
       --use_flash_attn          Use flash attention: $use_flash_attn
       --swiglu                  Use SWIGLU: $swiglu
       --ffn_hidden_size         FFN hidden size: $ffn_hidden_size
@@ -90,6 +92,8 @@ echo "Processing argument: $1"
       aiob_enable=--aiob_enable;;
     --enable_visual)
       enable_visual=--enable_visual;;
+    --workload_only)
+      workload_only=--workload_only;;
     --use_flash_attn)
       use_flash_attn=--use_flash_attn;;
     --swiglu)
@@ -158,6 +162,24 @@ case $model_size in
     hidden_size=4096
     num_attention_heads=32
     ;;
+  405)
+    model_name=llama_405B
+    num_layers=128
+    hidden_size=16384
+    ffn_hidden_size=53248
+    num_attention_heads=128
+    tensor_model_parallel_size=8
+    pipeline_model_parallel=16
+    ;;
+  65)
+    model_name=llama_65B
+    num_layers=80
+    hidden_size=8192
+    ffn_hidden_size=28672
+    num_attention_heads=64
+    tensor_model_parallel_size=8
+    pipeline_model_parallel=2
+    ;;
   moe)
     model_name=Mixtral_8*7B
     num_layers=32
@@ -177,9 +199,13 @@ case $model_size in
     ;;
 esac
 
-dp_num=$((WORLD_SIZE*8/tensor_model_parallel_size/pipeline_model_parallel))
+dp_num=$((world_size/tensor_model_parallel_size/pipeline_model_parallel))
 global_batch=$((ga_num*dp_num*micro_batch))
-script="./aicb.py"
+if [ $workload_only ]; then
+  script="python -m workload_generator.generate_megatron_workload" 
+else
+  script="./aicb.py"
+fi
 
 cmd="$script \
   --frame=$frame \
@@ -199,6 +225,7 @@ cmd="$script \
   --max_position_embeddings=$max_position_embeddings \
   ${aiob_enable} \
   ${enable_visual} \
+  ${workload_only} \
   ${sp_enable} \
   ${use_flash_attn} \
   ${swiglu} \
@@ -211,11 +238,14 @@ cmd="$script \
   ${grouped_gemm}"
 echo $cmd
 
-
-torchrun \
-  --nnodes $WORLD_SIZE \
-  --node_rank $RANK \
-  --nproc_per_node $NUM_GPUS \
-  --master_addr $MASTER_ADDR \
-  --master_port $MASTER_PORT \
+if [ $workload_only ]; then
   $cmd
+else
+  torchrun \
+    --nnodes $WORLD_SIZE \
+    --node_rank $RANK \
+    --nproc_per_node $NUM_GPUS \
+    --master_addr $MASTER_ADDR \
+    --master_port $MASTER_PORT \
+    $cmd
+fi

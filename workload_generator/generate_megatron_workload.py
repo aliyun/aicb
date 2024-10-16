@@ -18,7 +18,7 @@ python -m workload_generator.megatron_workload \
   --num_layers=32 --seq_length=2048 --hidden_size=4096 --epoch_num=2 --use-distributed-optimizer --enable_sequence_parallel
 """
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter
-import torch
+#import torch
 from workload_generator.workload_generator import WorkloadGenerator
 from workload_generator.mocked_model.MockedMegatron import MegatronModel
 from log_analyzer.log import LogItem
@@ -433,6 +433,13 @@ if __name__ == "__main__":
     model = MegatronModel(args)
     workload_generator = MegatronWorkload(args, model)
     workload = workload_generator()
-    filename = f"results/mocked_workload/pp_rank{args.pp_rank}_local_megatron.csv"
+    filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"
     workload.dump(filename)
+    if args.enable_visual:
+            try:
+                from visualize.generate import visualize_output
+                base_name = filename.split(".")[0]
+                visualize_output(f"./results/mocked_workload/{base_name}_workload.csv",True)
+            except ImportError: 
+                print("visualize_output is not available because required library is not found")
     # WorkloadWriter.write_workload(workload, args, filename)

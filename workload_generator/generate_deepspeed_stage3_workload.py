@@ -313,6 +313,13 @@ if __name__ == "__main__":
     model = DeepspeedForCausalLM(args)
     workload_generator = DeepSpeedStage3(args, model)
     workload = workload_generator()
-    filename = "results/mocked_workload/local_deepspeed_stage3.csv"
+    filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"
     workload.dump(filename)
+    if args.enable_visual:
+            try:
+                from visualize.generate import visualize_output
+                base_name = filename.split(".")[0]
+                visualize_output(f"./results/mocked_workload/{base_name}_workload.csv",True)
+            except ImportError: 
+                print("visualize_output is not available because required library is not found")
     # WorkloadWriter.write_workload(workload, args, filename)

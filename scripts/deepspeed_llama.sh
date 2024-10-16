@@ -24,6 +24,7 @@ batch_size=4
 contiguous_gradients=
 aiob_enable=
 enable_visual=
+workload_only=
 
 usage() {
   echo "Usage: $0 [options]
@@ -33,6 +34,7 @@ usage() {
       --epoch_num               num of iterations: $epoch_num
       --batch_size              micro batch_size: $batch_size
       --enable_visual           enable visual html output files
+      --workload_only           generate workload only
       -m, --model-size          llama model size.(7/13/30/65): $model_size
       --reduce-bucket-size      size of reduce bucket: $reduce_bucket_size
       --allgather-bucket-size   size of all_gather bucket(only used in stage1,2): $reduce_bucket_size
@@ -72,6 +74,8 @@ echo "Processing argument: $1"
       aiob_enable=--aiob_enable;;
     --enable_visual)
       enable_visual=--enable_visual;;
+    --workload_only)
+      workload_only=--workload_only;;
     --contiguous-gradients|--contiguous_gradients)
       contiguous_gradients=--contiguous_gradients; shift;;
     -h|--help)
@@ -108,4 +112,4 @@ $script --frame=DeepSpeed --model_name=$model_name --stage=$zero_stage --world_s
   --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size))  --epoch_num=$epoch_num \
   --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
   --reduce_bucket_size=$reduce_bucket_size --allgather_bucket_size=$allgather_bucket_size --seq_len=$seq_len \
-  --max_live_parameters=$max_live_parameters --param_persistence_threshold=$param_persistence_threshold $contiguous_gradients $aiob_enable $enable_visual
+  --max_live_parameters=$max_live_parameters --param_persistence_threshold=$param_persistence_threshold $contiguous_gradients $aiob_enable $enable_visual $workload_only
