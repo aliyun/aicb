@@ -178,7 +178,7 @@ class MegatronColumnLinear(MockedModel):
                     comm_type=CommType.computation,
                     msg_size=(
                         (self.seq_len, self.batch_size, self.input_size),
-                        self.weight.shape,
+                        (self.input_size, self.output_size_per_partition),
                     ),
                     stage="forward.MegatronColumnLinear." + self.name,
                 )
