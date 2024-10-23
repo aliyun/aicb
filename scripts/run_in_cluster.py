@@ -1,18 +1,21 @@
 #!/usr/bin/python3
 """ 
-Usage:
-1. change IMAGE_NAME form DUMMY to your real image name 
-2. change iplist to your real /path/to/iplist
-3. change DIR to your real /path/to/aicb
-4. change command line after /bin/sh -c '...' to run workload you want
-4. pscp.pssh -h iplist iplist /root/
-5. pscp.pssh -h iplist -r /root/aicb /root
-6. pssh -i -h iplist -o out -e err -t 0 "cd /root/aicb && python scripts/run_in_cluster.py"
+Usage [{filename}]:
+1. Change IMAGE_NAME from DUMMY to your real image name 
+2. Change IPLIST from DUMMY to your real /path/to/iplist (absolute path)
+3. Change AICB_DIR from DUMMY to your real /path/to/aicb (absolute path)
+4. Change the settings in run_suites.py to select the workload you want
+5. Copy iplist and aicb to all participating servers at /path/to/iplist and /path/to/aicb, e.g., using `pscp` command like `pscp.pssh -h iplist iplist /path/to/iplist` and `pscp.pssh -h iplist -r aicb /path/to/aicb`
+6. Run simulation on all participating servers, e.g., using `pssh` command like `pssh -i -h /path/to/iplist -o out -e err -t 0 "cd /path/to/aicb && python scripts/run_in_cluster.py"`
 """
+
 import subprocess
 import os
 import re
 import sys
+
+filename = os.path.basename(__file__)
+__doc__ = __doc__.format(filename=filename)
 
 
 def get_local_ip():
@@ -35,9 +38,14 @@ def get_docker_env_rank(filename):
     return -1, -1, -1, -1
 
 
-IPLIST = "IPLIST"  # os.getenv('IPLIST')
-AICB_DIR = "DIR"
-IMAGE_NAME = "DUMMY_IMAGE_NAME"  # os.getenv('IMAGE_NAME')
+IPLIST = "DUMMY_IPLIST"  # Change it to /path/to/iplist, e.g., /root/iplist
+AICB_DIR = "DUMMY_AICB_DIR" # Change it to /path/to/aicb, e.g., /root/aicb
+IMAGE_NAME = "DUMMY_IMAGE_NAME"  # Change it to your docker image name, e.g., nvcr.io/nvidia/pytorch:xx.xx-py3
+
+if IPLIST == "DUMMY_IPLIST" or AICB_DIR == "DUMMY_AICB_DIR" or IMAGE_NAME == "DUMMY_IMAGE_NAME":
+    sys.stderr.write(__doc__)
+    sys.exit(1)
+
 WORLD_SIZE, RANK, MASTER_ADDR, MASTER_PORT = get_docker_env_rank(IPLIST)
 AICB_DIR_base = os.path.basename(AICB_DIR)
 command = f"""docker run --name aicb_test --gpus all --privileged \
@@ -48,7 +56,8 @@ command = f"""docker run --name aicb_test --gpus all --privileged \
 -e MASTER_ADDR={MASTER_ADDR} \
 -e MASTER_PORT={MASTER_PORT} \
 -v {AICB_DIR}:/workspace/{AICB_DIR_base} \
-{IMAGE_NAME} /bin/sh -c 'cd /workspace/LLM_workload && pwd && python run_suites.py '
-"""
+{IMAGE_NAME} /bin/sh -c 'cd /workspace/{AICB_DIR_base} && pwd && python run_suites.py'
+""" # Change the settings in run_suites.py to select the workload you want
+
 ret = subprocess.run(command, shell=True)
 print(ret)
