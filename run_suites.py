@@ -118,7 +118,7 @@ def read_config(config):
         running_command["megatron_moe_aiob"] = (
             f"bash scripts/megatron_gpt.sh -m moe --tensor_model_parallel_size 2 --epoch_num 10 --sp --ep 4 --num_experts 16 --topk 4 --aiob_enable "
         )
-    if int(megatron_conf["llama_405B_aiob"]):
+    if int(aiob_conf["llama_405B_aiob"]):
         running_command["megatron_llama_405B"] = (
             f"bash scripts/megatron_gpt.sh -m 405 --tensor_model_parallel_size 8 --epoch_num 10 --sp --seq_length 8192 --aiob_enable "
         )

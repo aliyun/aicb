@@ -54,11 +54,13 @@ sh ./scripts/megatron_gpt.sh \
 The script used for multi-node execution is：[run_in_cluster.py](../scripts/run_in_cluster.py)
 
 Steps：
-1. First, install the batch distribution commands (such as pssh, pscp).
-2. Edit the `iplist` file of the cluster to be used, adding an accessible IP address of each machine to the iplist.
-3. Copy the `iplist` to each machine, and copy the AICB source code to each machine.
-4. Run the command just like this: `
-pssh -i -h iplist -o out -e err -t 0 "cd /root/AICBench && python run_in_cluster.py"`
+1. First, install the batch distribution commands (such as pssh and pscp).
+2. Edit the `iplist` file of the cluster to be used, adding an accessible IP address of each machine per line to the iplist.
+3. Modify [run_in_cluster.py](../scripts/run_in_cluster.py) to specify the image name and paths to `iplist` file and AICB home directory. Please refer to the doc of [run_in_cluster.py](../scripts/run_in_cluster.py) for more details. 
+4. Modify [run_suites.py](../run_suites.py) to select the workload to run (default: no workload).
+5. Copy the `iplist` and AICB source code to each machine (e.g., using pscp).
+4. Run the command just like this: `pssh -i -h /path/to/iplist -o out -e err -t 0 "cd /path/to/aicb && python run_in_cluster.py"`. Remember to replace `/path/to/iplist` and `/path/to/aicb` with the actual path on your machine.
+
 The specific command to be run on each machine can be modified in the highlighted section:
 
 ![Scaling Graph](../images/tutorial_7.png)
