@@ -592,7 +592,7 @@ class SIMAI_workload:
                     dp_comm_size=0,
                 )
             )
-        if args.expert_parallel_size != args.dp_num:
+        if args.expert_model_parallel_size != args.dp_num:
             self.workload.append(Work_Item(name="moe_grad_norm1", forward_compute_time=default_compute_time,
                                     forward_comm = "NONE", forward_comm_size= 0,
                                     backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
