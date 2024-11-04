@@ -5,7 +5,7 @@ set -x
 : ${RANK:=0}
 : ${MASTER_ADDR:="localhost"}
 : ${MASTER_PORT:=29500}
-NUM_GPUS=8
+NUM_GPUS=$(nvidia-smi -L | wc -l) # Get the number of GPUs on a single node
 model_size=13
 num_layers=40
 num_attention_heads=40
