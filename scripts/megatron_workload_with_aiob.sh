@@ -24,6 +24,7 @@ vocab_size=50257
 num_experts=1
 moe_enable=
 recompute_activations=
+gpu_type=
 usage() {
   echo "Usage: \$0 [options]
     options:
@@ -59,6 +60,8 @@ while [ $# -gt 0 ]
 do
    
   case $1 in
+    --gpu_type)
+      gpu_type=$2; shift;;
     --frame)
       frame=$2; shift;;
     --world_size)
@@ -146,6 +149,13 @@ case $model_size in
     num_attention_heads=32
     tensor_model_parallel_size=4
     ;;
+  405)
+    model_name=llama_405B
+    num_layers=128
+    hidden_size=16384
+    ffn_hidden_size=53248
+    num_attention_heads=128
+    ;;
   moe)
     model_name=Mixtral_8*7B
     num_layers=32
@@ -167,6 +177,7 @@ esac
 
 
 cmd="python -m workload_generator.AIOB_simAI_workload_generator \
+  --gpu_type=$gpu_type \
   --frame=$frame \
   --world_size=$world_size \
   --tensor_model_parallel_size=$tensor_model_parallel_size \

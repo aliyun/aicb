@@ -286,7 +286,7 @@ def get_comp_out(args):
     
 
 
-def extract_averages(file_path):
+def extract_averages(file_path,args):
     attention_avg_sum = 0.0
     mlp_avg_sum = 0.0
     other_avgs = {}
@@ -315,7 +315,11 @@ def extract_averages(file_path):
             elif avg_match and current_section:
                 avg_value = float(avg_match.group(1)) * 1000
                 if "atten" in current_section or current_section == "layernorm":
-                    attention_avg_sum += avg_value
+                    
+                    if args.recompute_activations and 'flash' in current_section:
+                        attention_avg_sum += avg_value*2
+                    else:
+                        attention_avg_sum += avg_value
                 elif "mlp" in current_section or current_section == "layernorm2":
                     mlp_avg_sum += avg_value
                 else:
@@ -499,6 +503,7 @@ def get_params():
         choices=["Megatron", "DeepSpeed", "collective_test"],
         default="Megatron",
     )
+    parser.add_argument("--gpu_type", type=str, default=None),
     parser.add_argument("--world_size", type=int, default=1,
                         help="Number of GPUs")
     parser.add_argument("--tensor_model_parallel_size", type=int, default=1,

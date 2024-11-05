@@ -57,10 +57,10 @@ if __name__ == "__main__":
             else:
                 filepath = get_aiob_path(args)
             torch.distributed.barrier()
-            compute_cache = extract_averages(filepath)
+            compute_cache = extract_averages(filepath,args)
         else:
             print("comp_filepath:", args.comp_filepath)
-            compute_cache = extract_averages(args.comp_filepath)
+            compute_cache = extract_averages(args.comp_filepath,args)
         workload = Comp_with_aiob(workload, compute_cache)
     if torch.distributed.get_rank() == 0:
         filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"

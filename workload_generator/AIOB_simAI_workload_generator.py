@@ -782,6 +782,7 @@ class SIMAI_workload:
                 f"HYBRID_TRANSFORMER_FWD_IN_BCKWD model_parallel_NPU_group: {self.args.tensor_model_parallel_size} "
                 f"ep: {self.args.expert_model_parallel_size} "
                 f"pp: {self.args.pipeline_model_parallel} "
+                f"vpp: {self.args.num_layers} "
                 f"ga: {self.ga_num} all_gpus: {self.args.world_size} "
                 f"checkpoints: 0 checkpoint_initiates: 0"
             ) + "\n")
@@ -865,7 +866,7 @@ if __name__ == "__main__":
     result_dir = "results/workload/"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-MOE-{args.moe_enable}-GEMM-{args.moe_grouped_gemm}-flash_attn-{args.use_flash_attn}"
+    filename = f"{args.gpu_type}-{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-MOE-{args.moe_enable}-GEMM-{args.moe_grouped_gemm}-flash_attn-{args.use_flash_attn}"
     filepath = os.path.join(result_dir, filename)
     params = model.parameters()
     # work = SIMAI_workload(model, args, GPU_Tensor_core.A100, "gpt13B")
@@ -879,11 +880,11 @@ if __name__ == "__main__":
 
             comp_filepath = get_comp_out(args)
 
-            compute_cache = extract_averages(comp_filepath)
+            compute_cache = extract_averages(comp_filepath,args)
         else:
             print("comp_filepath:", args.comp_filepath)
             comp_filepath = args.comp_filepath
-            compute_cache = extract_averages(comp_filepath)
+            compute_cache = extract_averages(comp_filepath,args)
 
         print("compute_cache = {")
         for key, value in compute_cache.items():

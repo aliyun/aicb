@@ -191,7 +191,7 @@ case $model_size in
     grouped_gemm=--moe_grouped_gemm
     ;;
   (*)
-    echo "Only support model size 175,22,13,7 or moe; using default size 13"
+    echo "Only support model size 405,175,22,13,7 or moe; using default size 13"
     model_name=gpt_13B
     num_layers=40
     hidden_size=5120
