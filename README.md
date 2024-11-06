@@ -1,7 +1,19 @@
 # Access AICB
+You can access the full suite of **SimAI** tools on **GitHub** via  [**SimAI@github**](https://github.com/aliyun/SimAI)
+
 You can access AICB on **GitHub** via  [**AICB@github**](https://github.com/aliyun/aicb)
 
 You can also access AICB on **Gitee** via [**AICB@gitee**](https://gitee.com/ali-ais-hpn/aicb)
+
+Welcome to join the SimAI community chat groups, with the DingTalk group on the left and the WeChat group on the right.
+
+<div style="display: flex; justify-content: flex-start; align-items: center; gap: 20px; margin-left: 20px;">
+    <img src="./images/simai_dingtalk.jpg" alt="SimAI DingTalk" style="width: 300px; height: auto;">
+    <img src="./images/simai_wechat.jpg" alt="SimAI WeChat" style="width: 300px; height: auto;">
+</div>
+
+<br/>
+
 # Lastest News
 [2024/9] AICB Version 1.1 Released.
 This version brings the following changes:
