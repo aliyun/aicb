@@ -224,11 +224,11 @@ sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
 For the Moe, you can also use [scripts/megatron_workload_with_aiob.sh](scripts/workload_megatron.sh) to generate the corresponding model's workload file. 
 ```bash
 sh scripts/megatron_workload_with_aiob.sh \
--m moe --world_size 512 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 --sp  --ep_num 16 \
+-m moe --world_size 512 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 --sp  --ep 16 \
 --num_experts 64 --moe_router_topk 2 --moe_grouped_gemm --moe_enable  \
 --frame Megatron --global_batch 1024  \
 --micro_batch 1 --seq_length 4096 --swiglu \
---use_flash_attn  --aiob_enable \
+--use_flash_attn  --aiob_enable 
 ```
 
 ### Generating the workload description files for DeepSpeed

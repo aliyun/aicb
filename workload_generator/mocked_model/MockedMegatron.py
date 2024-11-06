@@ -595,7 +595,7 @@ class MegatronEmbedding(MockedModel):
         self.layer_id = 0
         num_embedding_per_partition = divide(padded_vocab_size, tp)
         self.word_embedding = MockedParam(
-            (2 * num_embedding_per_partition, hidden_size), name=self.name
+            (4 * num_embedding_per_partition, hidden_size), name=self.name
         )
         self.tensor_model_parallel_size = tp
         # TODO : position embedding shape is max_sequence_length not sequence_length
