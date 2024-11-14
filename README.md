@@ -298,7 +298,7 @@ The results consist of several parts:
 - Overall Computation and Communication Proportion (Supported for Physical Cluster Runs Only): Shows the proportion of total time spent on computation and communication during AICB runs.
 
 # Tutorial
-We provide a tutorial for users to quickly get started with AICB. [the tutorial](training/tutorial)
+We provide a tutorial for users to quickly get started with AICB. [the tutorial](./training/tutorial.md)
 
 # Projects using AICB
 Below are some of the projects where we have directly used AICB:
