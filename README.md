@@ -71,17 +71,18 @@ There are a lot of parameters that influence the communication and computation p
 For the sake of generality, we cover those typical settings using a smallest set of benchmarks rather than traversing all the combinations. To this end, we propose the benchmark suite as listed in the following table.
 **Users can directly run all the selected workloads selected in AICB, or run part of the workloads, or even generate their own workloads.**
 For more detailed information, please refer to [AICB_workload spec v1.1](workload/Workload_spec_v1.1.csv).
-| id  | Name      | Parameter_size | Hidden_size | Num_of_layers| TP              | PP              | ZERO_Stage      |Framework      |
-|-----|-----------|----------------|-------------|--------------|-----------------|-----------------|-----------------|---------------|
-| 1   | GPT_7B    | 7B             | 4096        | 32           | 1               | 1               | -               |Megatron       |
-| 2   | GPT_13B   | 13B            | 5120        | 40           | 2               | 1               | -               |Megatron       |
-| 3   | GPT_22B   | 22B            | 6144        | 48           | 4               | 1               | -               |Megatron       |
-| 4   | LLaMA_65B | 65B            | 8192        | 80           | 8               | 2               | -               |Megatron       |
-| 5   | GPT_175B  | 175B           | 12288       | 96           | 8               | 8               | -               |Megatron       |
-| 6   | Mistral_8*7B | 56B            | 4096        | 32           | 2              | 1             | -               |Megatron       |
-| 7   | Llama_405B | 405B          | 16384       | 126          | 8               | 16              | -               |Megatron       |
-| 8   | LLaMA_7B  | 7B             | 4096        | 32           | 1               | 1               | 2               |DeepSpeed      |
-| 9   | LLaMA_65B | 65B            | 8192        | 80           | 1               | 1               | 3               |DeepSpeed      |
+| id  | Name          | Sequence_length | Framework | TP  | DP                    | PP  | SP     | Expert parallel number | Expert num | Zero_level |
+|:---:|:-------------:|:---------------:|:---------:|:---:|:---------------------:|:---:|:------:|:----------------------:|:----------:|:----------:|
+|  1  | LLaMA_7B      |      2048       | Megatron  |  1  |  world_size/(PP*TP)   |  1  |   -    |           -            |     -      |     -      |
+|  2  | GPT_13B       |      2048       | Megatron  |  2  |  world_size/(PP*TP)   |  1  | enable |           -            |     -      |     -      |
+|  3  | GPT_22B       |      2048       | Megatron  |  4  |  world_size/(PP*TP)   |  1  |   -    |           -            |     -      |     -      |
+|  4  | LLaMA_65B     |      4096       | Megatron  |  8  |  world_size/(PP*TP)   |  2  | enable |           -            |     -      |     -      |
+|  5  | GPT_175B      |      2048       | Megatron  |  8  |  world_size/(PP*TP)   |  8  | enable |           -            |     -      |     -      |
+|  6  | GPT_175B      |      2048       | Megatron  |  8  |  world_size/(PP*TP)   |  8  | disable|           -            |     -      |     -      |
+|  7  | Llama3_405B   |      8192       | Megatron  |  8  |  world_size/(PP*TP)   |  16 | enable |           -            |     -      |     -      |
+|  8  | LLaMA_7B      |      4096       | Deepspeed |  1  |      world_size       |  1  |   -    |           -            |     -      |     2      |
+|  9  | LLaMA_65B     |      4096       | Deepspeed |  1  |      world_size       |  1  |   -    |           -            |     -      |     3      |
+| 10  | Mistral_8*7B  |      2048       | Megatron  |  2  |  world_size/(PP*TP)   |  1  | enable |           8            |     8      |     -      |
 
 
 # Setup
@@ -117,7 +118,7 @@ After installation, we provide three main usage scenarios for AICB:
 2. [Generating workload descrption files for simulation](#generate-workloads-for-simulation-simai) 
 3. [Customized parameters](#customized-parameters).
 
-There is a tutorial including all the details, please refer to [the tutorial](training/tutorial).
+There is a tutorial including all the details, please refer to [the tutorial](training/tutorial.md).
 ## Running on physical GPU clusters
 For running AICB on a physical machine, we provide both [scripts](scripts/megatron_gpt.sh) for quick start and [methods](aicb.py) for executing custom cases.
 
@@ -157,7 +158,7 @@ sh scripts/megatron_gpt.sh \
 ```
 
 ### Running workloads for DeepSpeed
-For the `DeepSpeed` parallel framework, you can quickly start it using the [scripts/deepspeed_llama.sh](scripts/deepspeed_llama.sh) script file. Currently, the DeepSpeed framework does not support `--aiob_enable` or `--comp_filepath`, but you can choose to use fixed computation times (please refer to [the tutorial](training/tutorial)).
+For the `DeepSpeed` parallel framework, you can quickly start it using the [scripts/deepspeed_llama.sh](scripts/deepspeed_llama.sh) script file. Currently, the DeepSpeed framework does not support `--aiob_enable` or `--comp_filepath`, but you can choose to use fixed computation times (please refer to [the tutorial](training/tutorial.md)).
 ```bash
 sh scripts/deepspeed_llama.sh \
 --zero_stage 3 -m 65 --epoch_num 100 \
@@ -169,7 +170,7 @@ To mirror the real-world workloads with both computation and communicaiton, we d
 In AICB, we can enable AIOB to embed the computation time into the workloads.
 
 For the Megatron parallel framework, the `--aiob_enable` option allows for capturing the computation time of each operation in the actual model. 
-If we do not set `--aiob_enable`, only fixed computation times can be applied. (Please refer to [the tutorial](training/tutorial))
+If we do not set `--aiob_enable`, only fixed computation times can be applied. (Please refer to [the tutorial](training/tutorial.md))
 
 * Running workloads with computation times generated by AIOB. After running, we can get an extra computation desrcription file describing the computation times for the main computation kernels in the directory of [results/aiob_outputs](results/aiob_outputs).
 Note that the computation times are obtained through the execution of computation kernels on the specific GPU.
@@ -239,7 +240,7 @@ sh ./scripts/workload_deepspeed.sh -m 7
 ```
 
 ## Running AICB with customized parameters
-In addition to quick start, you can also customize the model parameters in detail to run on physical clusters or generate the required workloads for simulation and analysis. For more detailed parameter descriptions and more Example, please refer to [the tutorial](training/tutorial).
+In addition to quick start, you can also customize the model parameters in detail to run on physical clusters or generate the required workloads for simulation and analysis. For more detailed parameter descriptions and more Example, please refer to [the tutorial](training/tutorial.md).
 
 ### Running customized workloads on physical GPU clusters
 The current entry file for running custom cases is [aicb.py](aicb.py). By using this file, you can flexibly choose more parameters for tuning.
