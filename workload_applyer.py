@@ -204,6 +204,7 @@ class WorkloadApplyer:
         world_size = self._get_pipeline_parallel_size()
         return self.pp_global_rank_info[(rank_in_pipeline + 1) % world_size]
 
+    @bench_logger.log_timing("comm")
     def _apply_p2pcommunication(self, item):
         ops = []
         tensor = torch.narrow(self.buffer, 0, 0, item.msg_size // 2)

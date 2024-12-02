@@ -784,7 +784,8 @@ class SIMAI_workload:
                 f"pp: {self.args.pipeline_model_parallel} "
                 f"vpp: {self.args.num_layers} "
                 f"ga: {self.ga_num} all_gpus: {self.args.world_size} "
-                f"checkpoints: 0 checkpoint_initiates: 0"
+                f"checkpoints: 0 checkpoint_initiates: 0 "
+                f"pp_comm: {2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size}"
             ) + "\n")
 
             f.write(str(len(self.workload)) + "\n")

@@ -51,9 +51,9 @@ def calc_bw_log(comm_type: CommType, size, duration,group_size):  # size: Bytes;
     elif comm_type == CommType.all_reduce:
         tput = size / duration
         busbw = (size / duration) * (2 * (n - 1) / n)
-    elif comm_type in [CommType.isend, CommType.irecv, CommType.barrier, CommType.computation]:
+    elif comm_type in [CommType.barrier, CommType.computation]:
         return 0, 0
-    else:  # [CommType.broadcast, CommType.reduce, "gather", "scatter"]
+    else:  # [CommType.broadcast, CommType.reduce, "gather", "scatter", "isend", "irecv"]
         tput = size / duration
         busbw = tput
     tput /= 1024*1024*1024
