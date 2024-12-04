@@ -777,6 +777,11 @@ class SIMAI_workload:
 
     def dump_file(self, filename):
         filename = filename + ".txt"
+        pp_comm = (
+            f"pp_comm: {2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size}"
+            if self.args.pipeline_model_parallel != 1
+            else "pp_comm: 0"
+        )
         with open(filename, "w") as f:
             f.write((
                 f"HYBRID_TRANSFORMER_FWD_IN_BCKWD model_parallel_NPU_group: {self.args.tensor_model_parallel_size} "
@@ -785,8 +790,7 @@ class SIMAI_workload:
                 f"vpp: {self.args.num_layers} "
                 f"ga: {self.ga_num} all_gpus: {self.args.world_size} "
                 f"checkpoints: 0 checkpoint_initiates: 0 "
-                f"pp_comm: {2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size}"
-            ) + "\n")
+            ) + pp_comm + "\n")
 
             f.write(str(len(self.workload)) + "\n")
             for item in self.workload:
