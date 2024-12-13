@@ -361,7 +361,7 @@ class MegatronLayernorm(torch.nn.Module):
     @cuda_timing_decorator
     def _apply(self, hidden_states):
         output_lay = FastLayerNormFN.apply(
-            hidden_states, self.lay_weight, self.bias, 1e-05
+            hidden_states, self.lay_weight, self.bias, 1e-05, 1
         )
 
         return output_lay
