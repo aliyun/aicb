@@ -244,8 +244,10 @@ def Comp_with_aiob(workload, compute_cache):
     for item in workload.workload:
         if item.comm_type == CommType.computation:
             for key in compute_cache:
-                key_temp = key.split("_")[0]
-                if key_temp in item.stage:
+                item._elapsed_time = 0
+                key_split = key.rsplit('_', 1)
+                stage_split = item.stage.rsplit('.', 2)
+                if (len(key_split) > 1 and len(stage_split) > 2) and (key_split[0] == stage_split[2]) and (key_split[1] == stage_split[0]):
                     item._elapsed_time = compute_cache[key]
                     break
     return workload
@@ -287,8 +289,10 @@ def get_comp_out(args):
 
 
 def extract_averages(file_path,args):
-    attention_avg_sum = 0.0
-    mlp_avg_sum = 0.0
+    attention_column_avg_sum = 0.0
+    attention_row_avg_sum = 0.0
+    mlp_column_avg_sum = 0.0
+    mlp_row_avg_sum = 0.0
     other_avgs = {}
     grad_forward = 0.0
     grad_backward = 0.0
@@ -314,31 +318,46 @@ def extract_averages(file_path,args):
                     grad_backward = float(avg_match.group(1)) * 1000
             elif avg_match and current_section:
                 avg_value = float(avg_match.group(1)) * 1000
-                if "atten" in current_section or current_section == "layernorm":
-                    
+                if current_section in ["atten_qkv", "atten_core_qk", "atten_core_softmax", "atten_core_contex"]:
                     if args.recompute_activations and 'flash' in current_section:
-                        attention_avg_sum += avg_value*2
+                        attention_column_avg_sum += avg_value*2
                     else:
-                        attention_avg_sum += avg_value
-                elif "mlp" in current_section or current_section == "layernorm2":
-                    mlp_avg_sum += avg_value
+                        attention_column_avg_sum += avg_value
+                elif current_section in ["atten_linear", "layernorm2"]:
+                    if args.recompute_activations and 'flash' in current_section:
+                        attention_row_avg_sum += avg_value*2
+                    else:
+                        attention_row_avg_sum += avg_value
+                elif current_section in ["mlp_linear_1", "mlp_gelu"]:
+                    mlp_column_avg_sum += avg_value
+                elif current_section in ["mlp_linear_2"]:
+                    mlp_row_avg_sum += avg_value
                 else:
                     other_avgs[current_section] = avg_value
 
     # 四舍五入并转换为整数
-    attention_forward = round(attention_avg_sum)
-    attention_backward = attention_forward
-    mlp_forward = round(mlp_avg_sum)
-    mlp_backward = mlp_forward
+    attention_column_forward = round(attention_column_avg_sum)
+    attention_row_forward = round(attention_row_avg_sum)
+    attention_column_backward = attention_column_forward
+    attention_row_backward = attention_row_forward
+    mlp_column_forward = round(mlp_column_avg_sum)
+    mlp_row_forward = round(mlp_row_avg_sum)
+    mlp_column_backward = mlp_column_forward
+    mlp_row_backward = mlp_row_forward
+
     grad_backward = round(grad_backward)
     grad_forward = round(grad_forward)
     other_avgs_int = {k: round(v) for k, v in other_avgs.items() if k != "param_time"}
 
     a100_compute_cache = {
-        "attention_forward": attention_forward,
-        "attention_backward": attention_backward,
-        "mlp_forward": mlp_forward,
-        "mlp_backward": mlp_backward,
+        "attention_column_forward": attention_column_forward,
+        "attention_row_forward": attention_row_forward,
+        "attention_column_backward": attention_column_backward,
+        "attention_row_backward": attention_row_backward,
+        "mlp_column_forward": mlp_column_forward,
+        "mlp_row_forward": mlp_row_forward,
+        "mlp_column_backward": mlp_column_backward,
+        "mlp_row_backward": mlp_row_backward,
         "grad_forward": grad_forward,
         "grad_backward": grad_backward,
     }
