@@ -777,8 +777,13 @@ class SIMAI_workload:
 
     def dump_file(self, filename):
         filename = filename + ".txt"
+
+        pp_comm_value = 2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size
+        if self.args.enable_sequence_parallel:
+            pp_comm_value /= self.args.tensor_model_parallel_size
+
         pp_comm = (
-            f"pp_comm: {2 * self.args.micro_batch * self.args.seq_length * self.args.hidden_size}"
+            f"pp_comm: {pp_comm_value}"
             if self.args.pipeline_model_parallel != 1
             else "pp_comm: 0"
         )
