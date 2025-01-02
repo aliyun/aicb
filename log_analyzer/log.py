@@ -19,7 +19,7 @@ import numpy as np
 from typing import Union, Dict, List
 from utils.utils import CommType, CommGroup
 from log_analyzer.utils import convert_size_to_msg, calc_bw_log
-
+import copy
 
 @dataclasses.dataclass
 class LogItem:
@@ -208,7 +208,12 @@ class Log:
         with open(csv_filename, "w") as f:
             f.write(self.comm_logs[0].csv_header() + "\n")
             for log_item in self.comm_logs:
-                f.write(log_item.view_as_csv_line() + "\n")
+                log_item_write = copy.deepcopy(log_item)
+                if(log_item_write.comm_type == CommType.computation):
+                    msg_size_str = "("+' '.join(str(shape).replace(',', '') for shape in log_item_write.msg_size)+")"
+                    log_item_write.msg_size = msg_size_str
+                f.write(log_item_write.view_as_csv_line() + "\n")
+                del log_item_write
         return csv_filename
 
     @staticmethod
@@ -288,7 +293,12 @@ class Workload:
         with open(csv_filename, "w") as f:
             f.write(self.workload[0].csv_header() + "\n")
             for log_item in self.workload:
-                f.write(log_item.view_as_csv_line() + "\n")
+                log_item_write = copy.deepcopy(log_item)
+                if(log_item_write.comm_type == CommType.computation):
+                    msg_size_str = "("+' '.join(str(shape).replace(',', '') for shape in log_item_write.msg_size)+")"
+                    log_item_write.msg_size = msg_size_str
+                f.write(log_item_write.view_as_csv_line() + "\n")
+                del log_item_write
         print(f"Workload file generated:{csv_filename}")
         
     @staticmethod

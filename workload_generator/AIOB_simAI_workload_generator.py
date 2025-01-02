@@ -111,7 +111,7 @@ class SIMAI_workload:
                     params = model.parameters()
                     param_count = sum(p.numel() for p in params)
                     layers.append(LayerInfo(model.layer_id, model.name, param_count))
-                if isinstance(model, GroupedMLP):
+                if isinstance(model, MOEMLP):
                     moe_params = model.parameters()
                     moe_param_count = sum(p.numel() for p in moe_params)
                     layers.append(LayerInfo(model.layer_id, model.name, moe_param_count))

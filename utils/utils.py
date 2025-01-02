@@ -246,7 +246,7 @@ def Comp_with_aiob(workload, compute_cache):
             for key in compute_cache:
                 key_temp = key.split("_")[0]
                 if key_temp in item.stage:
-                    item.msg_size = compute_cache[key]
+                    item._elapsed_time = compute_cache[key]
                     break
     return workload
 
