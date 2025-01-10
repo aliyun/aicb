@@ -24,7 +24,7 @@ vocab_size=50257
 num_experts=1
 moe_enable=
 recompute_activations=
-gpu_type=
+gpu_type=None
 usage() {
   echo "Usage: \$0 [options]
     options:

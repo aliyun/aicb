@@ -357,7 +357,7 @@ class WorkloadApplyer:
         if self.skip_computation:
             return
         if self.computation_aiob:
-            time.sleep(item._elapsed_time / 1e9)
+            time.sleep(item._elapsed_time/ 1e9)
         else:
             # item.msg_size = 1
             input_shape1, input_shape2 = item.msg_size

@@ -375,7 +375,7 @@ class MegatronMlp(MockedModel):
         return workloads
 
 
-class GroupedMLP(MockedModel):
+class MOEMLP(MockedModel):
     def __init__(
         self,
         batch_size,
@@ -549,8 +549,8 @@ class MegatronTransformorLayer(MockedModel):
         )
         self.pre_mlp_layernorm = FusedLayernorm(hidden_size)
         self.post_attention_layernorm_bias = MockedParam((hidden_size, 1))
-        if moe_enable and moe_grouped_gemm:
-            self.mlp = GroupedMLP(
+        if moe_enable:
+            self.mlp = MOEMLP(
                 batch_size,
                 hidden_size,
                 tp,
