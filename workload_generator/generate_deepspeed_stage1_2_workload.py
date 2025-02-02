@@ -49,7 +49,7 @@ class DeepSpeedStage1(WorkloadGenerator):
         )
         self.allgather_bucket_size = args.allgather_bucket_size
         self.amp_enabled = args.amp_enabled
-        self.dp_world_size = args.dp_num
+        self.dp_world_size = args.data_parallel_size
         self.elem_size = 2
         self.all_params = list(self.model.parameters())
 

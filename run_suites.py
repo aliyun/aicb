@@ -76,11 +76,11 @@ def read_config(config):
         )
     if int(megatron_conf["gpt_175B"]):
         running_command["megatron_gpt175B"] = (
-            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --pipeline_model_parallel 2 --sp"
+            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --pipeline_model_parallel_size 2 --sp"
         )
     if int(megatron_conf["gpt_175B_tp"]):
         running_command["megatron_gpt175B_tp"] = (
-            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --pipeline_model_parallel 2"
+            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --pipeline_model_parallel_size 2"
         )
     if int(megatron_conf["gpt_22B"]):
         running_command["megatron_gpt_22B"] = (
@@ -104,11 +104,11 @@ def read_config(config):
         )
     if int(aiob_conf["gpt_175B_aiob"]):
         running_command["megatron_gpt175B_aiob"] = (
-            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --aiob_enable --pipeline_model_parallel 2 --sp"
+            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --aiob_enable --pipeline_model_parallel_size 2 --sp"
         )
     if int(aiob_conf["gpt_175B_tp_aiob"]):
         running_command["megatron_gpt175B_tp_aiob"] = (
-            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --aiob_enable --pipeline_model_parallel 2 "
+            f"bash scripts/megatron_gpt.sh -m 175 --tensor_model_parallel_size 8 --epoch_num 10 --aiob_enable --pipeline_model_parallel_size 2 "
         )
     if int(aiob_conf["gpt_22B_aiob"]):
         running_command["megatron_gpt_22B_aiob"] = (

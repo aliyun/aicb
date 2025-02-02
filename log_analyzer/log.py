@@ -227,25 +227,26 @@ class Log:
         return self.epoch_times
 
     def analyze_time(self, print_fn=print):
-        self.epoch_times.pop(0)
-        max_val = max(self.epoch_times)
-        min_val = min(self.epoch_times)
-        mean_val = sum(self.epoch_times) / len(self.epoch_times)
+        if self.epoch_times:
+            self.epoch_times.pop(0)
+            max_val = max(self.epoch_times)
+            min_val = min(self.epoch_times)
+            mean_val = sum(self.epoch_times) / len(self.epoch_times)
 
-        variance = sum((x - mean_val) ** 2 for x in self.epoch_times) / len(
-            self.epoch_times
-        )
-        variance = math.sqrt(variance)
+            variance = sum((x - mean_val) ** 2 for x in self.epoch_times) / len(
+                self.epoch_times
+            )
+            variance = math.sqrt(variance)
 
-        sorted_list = sorted(self.epoch_times)
-        p90_val = sorted_list[int(len(sorted_list) * 0.9)]
-        p99_val = sorted_list[int(len(sorted_list) * 0.99)]
-        header = f"{'Init time':<18} {'Max iteration time':<20} {'Min iteration time':<20} {'Avg iteration time':<20} {'P90 iteration time ':<20} {'Iteration time Std ':<20}\n"
-        separator = "-" * len(header) + "\n"
-        log_str = separator + header + separator 
-        iteration_result = f"{self.epoch_times[0]:<18.2f} {max_val:<20.2f} {min_val:<20.2f} {mean_val:<20.2f} {p90_val:<20.2f} {variance:<20.2f}\n"
-        log_str += iteration_result
-        print_fn(f"\n\tDetailed info for AICB iteration time\n{log_str}")
+            sorted_list = sorted(self.epoch_times)
+            p90_val = sorted_list[int(len(sorted_list) * 0.9)]
+            p99_val = sorted_list[int(len(sorted_list) * 0.99)]
+            header = f"{'Init time':<18} {'Max iteration time':<20} {'Min iteration time':<20} {'Avg iteration time':<20} {'P90 iteration time ':<20} {'Iteration time Std ':<20}\n"
+            separator = "-" * len(header) + "\n"
+            log_str = separator + header + separator 
+            iteration_result = f"{self.epoch_times[0]:<18.2f} {max_val:<20.2f} {min_val:<20.2f} {mean_val:<20.2f} {p90_val:<20.2f} {variance:<20.2f}\n"
+            log_str += iteration_result
+            print_fn(f"\n\tDetailed info for AICB iteration time\n{log_str}")
 
 
 class Workload:
@@ -254,7 +255,8 @@ class Workload:
 
     def append(self, log_item: Union[LogItem, Dict]):
         if isinstance(log_item, LogItem):
-            self.workload.append(log_item)
+            if log_item.comm_group_size != 1:
+                self.workload.append(log_item)
             return
         if "stage" not in log_item:
             log_item["stage"] = log_item["operation"] if "operation" in log_item else ""

@@ -881,7 +881,7 @@ class Grad_param:
     def __init__(self, args=None):
         tp = args.tensor_model_parallel_size
         param = args.model_param
-        self.dp = args.dp_num
+        self.dp = args.data_parallel_size
 
         device = torch.cuda.current_device()
         dtype = torch.float32
