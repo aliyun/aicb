@@ -76,7 +76,7 @@ echo "Processing argument: $1"
       tensor_model_parallel_size=$2; shift;;
     --pipeline_model_parallel_size|pp_num)
       pipeline_model_parallel_size=$2; shift;;
-    --context_parallel_size|pp_num)
+    --context_parallel_size|cp_num)
       context_parallel_size=$2; shift;;
     --global_batch)
       global_batch=$2; shift;;
