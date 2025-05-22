@@ -500,7 +500,7 @@ def get_params():
     parser.add_argument(
         "--frame",
         help="communication framework",
-        choices=["Megatron", "DeepSpeed", "collective_test"],
+        choices=["Megatron", "DeepSpeed", "collective_test", "DeepSeek"],
         default="Megatron",
     )
     parser.add_argument("--gpu_type", type=str, default=None),
@@ -550,6 +550,7 @@ def get_params():
     get_moe_params(parser)
     get_simAI_workload_params(parser)
     get_aiob_params(parser)
+    get_deepseek_params(parser)
     args = parser.parse_args()
 
     assert (
@@ -715,6 +716,38 @@ def get_moe_params(parser: argparse.ArgumentParser):
     parser.add_argument('--moe_grouped_gemm', action='store_true',
                        help='When there are multiple experts per rank, compress multiple local (potentially small) gemms in a single kernel launch to improve the utilization and performance by leveraging the Grouped GEMM feature introduced since CUTLASS 2.8 (https://github.com/fanshiqing/grouped_gemm).')
     parser.add_argument('--activation_func', type=str,help='activation_func for mlp')
+
+def get_deepseek_params(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "--n_dense_layers", type=int, default=3, help="Number of dense (non-MoE) layers"
+    )
+    parser.add_argument(
+        "--n_shared_expert",
+        type=int,
+        default=2,
+        help="Number of shared experts for DeepSeek model",
+    )
+    parser.add_argument(
+        "--qk_rope_dim",
+        type=int,
+        default=64,
+        help="Dimention of QK with positional embeddings",
+    )
+    parser.add_argument(
+        "--qk_nope_dim",
+        type=int,
+        default=128,
+        help="Dimention of QK without positional embeddings",
+    )
+    parser.add_argument(
+        "--q_lora_rank", type=int, default=1536, help="Q down projection size"
+    )
+    parser.add_argument(
+        "--kv_lora_rank", type=int, default=512, help="KV down projection size"
+    )
+    parser.add_argument(
+        "--v_head_dim", type=int, default=128, help="Dimention for value projection"
+    )
 
 def ensure_divisibility(numerator, denominator):
     """Ensure that numerator is divisible by the denominator."""

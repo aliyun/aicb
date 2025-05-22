@@ -13,6 +13,7 @@ limitations under the License.
 
 import workload_generator.mocked_model.MockedDeepspeed
 from workload_generator.mocked_model.MockedMegatron import *
+from workload_generator.mocked_model.MockedDeepSeek import *
 from workload_generator.mocked_model.MockedModel import MockedParam, MockedModel
 from utils.utils import CommType, get_params, get_comp_out, extract_averages
 import os
@@ -107,11 +108,12 @@ class SIMAI_workload:
                     or isinstance(model, MegatronRowLinear)
                     or isinstance(model, MegatronEmbedding)
                     or isinstance(model, FusedLayernorm)
+                    or isinstance(model, DeepSeekLinear)
                 ):
                     params = model.parameters()
                     param_count = sum(p.numel() for p in params)
                     layers.append(LayerInfo(model.layer_id, model.name, param_count))
-                if isinstance(model, MOEMLP):
+                if isinstance(model, MOEMLP) or isinstance(model, DeepSeekMoE):
                     moe_params = model.parameters()
                     moe_param_count = sum(p.numel() for p in moe_params)
                     layers.append(LayerInfo(model.layer_id, model.name, moe_param_count))
@@ -121,6 +123,8 @@ class SIMAI_workload:
                     isinstance(model, MegatronAttention)
                     or isinstance(model, MegatronMlp)
                     or isinstance(model, MegatronEmbedding)
+                    or isinstance(model, DeepSeekMLA)
+                    or isinstance(model, DeepSeekMoE)
                 ):
                     params = model.parameters()
                     param_count = sum(p.numel() for p in params)
@@ -285,6 +289,32 @@ class SIMAI_workload:
                                 backward_compute_time=default_compute_time,
                                 backward_comm=backward_comm,
                                 backward_comm_size=backward_comm_size,
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
+                    if "attention_linear" in name:
+                        # for non-shareded linear in attention block
+
+                        # similar to row linear but without comms
+                        forward_compute_time=_get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+                        if self.args.recompute_activations:
+                            forward_compute_time *= 2
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=forward_compute_time,
+                                forward_comm="NONE",
+                                forward_comm_size=0,
+                                backward_compute_time=backward_compute_time,
+                                backward_comm="NONE",
+                                backward_comm_size=0,#sp overlap allgather
                                 dp_compute_time=backward_compute_time,
                                 dp_comm=dp_comm,
                                 dp_comm_size=dp_comm_size,
@@ -627,7 +657,32 @@ class SIMAI_workload:
                                 dp_comm_size=dp_comm_size,
                             )
                         )
+                    if "attention_linear" in name:
+                        # for non-shareded linear in attention block
 
+                        # similar to row linear but without comms
+                        forward_compute_time=_get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+                        if self.args.recompute_activations:
+                            forward_compute_time *= 2
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=forward_compute_time,
+                                forward_comm="NONE",
+                                forward_comm_size=0,
+                                backward_compute_time=backward_compute_time,
+                                backward_comm="NONE",
+                                backward_comm_size=0,#sp overlap allgather
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
                     if "row" in name:
                         if self.args.recompute_activations and 'attention' in name:
                             forward_comm_size *= 2
@@ -872,7 +927,10 @@ class simAI_MicroTest:
 if __name__ == "__main__":
     args = get_params()
     print(args)
-    model = MegatronModel(args)
+    if args.frame == "DeepSeek":
+        model = DeepSeekV3Model(args)
+    else:
+        model = MegatronModel(args)
     result_dir = "results/workload/"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
