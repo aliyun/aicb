@@ -38,6 +38,7 @@ except ImportError:
     except ImportError:
         flash_attn_unpadded_func = None
 
+from workload_generator.mocked_model.AiobDeepSeek import DeepSeekMoE
 
 class MegatronModel(torch.nn.Module):
     def __init__(self, args=None):
@@ -52,7 +53,10 @@ class MegatronModel(torch.nn.Module):
         else:
             self.Attention = MegatronAtten(self.args)
         if self.args.moe_enable:
-            self.Mlp = MoELayer(self.args)
+            if self.args.frame == "DeepSeek":
+                self.Mlp = DeepSeekMoE(self.args)
+            else:
+                self.Mlp = MoELayer(self.args)
         else:
             self.Mlp = MegatronMlp(self.args)
         self.logit = logit(self.args)
@@ -127,6 +131,7 @@ class MegatronModel(torch.nn.Module):
             self.time_list.setdefault("layernorm_post", []).append(
                 {"time_gpu": layernorm_post}
             )
+            print(f"lay_post__out.shape: {lay_post__out.shape}")
             logit_out, logit_time = self.logit(lay_post__out)
             self.time_list.setdefault("logit_time", []).append({"time_gpu": logit_time})
             _, param_time = self.grad_param._apply()

@@ -257,10 +257,9 @@ def get_comp_out(args):
     seq_len = args.seq_length
     tp = args.tensor_model_parallel_size
     vocab_size = args.padded_vocab_size
-    if "Megatron" in args.frame:
+    if "Megatron" or "DeepSeek" in args.frame:
         device = torch.cuda.current_device()
         from workload_generator.mocked_model.AiobMegatron import MegatronModel
-
         measure_model = MegatronModel(args)
         measure_model.train()
         if args.dtype == "bfloat16":
