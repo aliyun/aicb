@@ -50,6 +50,11 @@ if __name__ == "__main__":
         
         params = model.parameters()
         args.model_param = sum(p.numel() for p in params)
+        args.activation_memory = 0
+        for sub_module in model.child_modules():
+            if hasattr(sub_module, "activation_memory"):
+                args.activation_memory += sub_module.activation_memory()
+        print("model_param:", args.model_param)
         if args.comp_filepath == None:
             local_rank = torch.distributed.get_rank() % torch.cuda.device_count()
             if local_rank == 0:
