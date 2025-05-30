@@ -340,6 +340,7 @@ class MegatronWorkload(WorkloadGenerator):
                     src=0,
                 )
             )
+            # 8 represent int64
             self.workload.append(
                 LogItem(
                     comm_type=CommType.broadcast,
