@@ -196,6 +196,7 @@ sh scripts/megatron_gpt.sh \
 ## Generate Workloads for Simulation (SimAI)
 In addition to running the AICB in the GPU clusters, AICB also generates the workload description files which can be used for simulation or further analysis.
 In this release, we provide [scripts](scripts/megatron_workload_with_aiob.sh) for quickly generating workloads for SimAI.
+For now MLA and Linear Attention Models are not supported. To customize your own workloads, please refer to [Customized parameters](workload_generator/mocked_model/MockedModel.py) and add new models.
 
 ### Generating the workload description files for the whole benchmark suite
 You can generate all the workload description files with [generate_suite]() as specified in our AICB workload spec v1.0. Once these files are created, you can execute them using the SimAI to test and analyze various scenarios.
