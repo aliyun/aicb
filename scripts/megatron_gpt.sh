@@ -214,7 +214,7 @@ fi
 cmd="$script \
   --frame=$frame \
   --model_name=$model_name \
-  --world_size=$(($WORLD_SIZE * $NUM_GPUS)) \
+  --world_size=$world_size \
   --tensor_model_parallel_size=$tensor_model_parallel_size \
   --micro_batch=$micro_batch \
   --global_batch=$global_batch \

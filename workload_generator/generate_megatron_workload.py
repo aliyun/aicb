@@ -147,7 +147,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.irecv,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="forward_step",
@@ -184,7 +184,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.isend,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="forward_step",
@@ -197,7 +197,7 @@ class MegatronWorkload(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.irecv,
                     comm_group=CommGroup.pp_group,
-                    comm_group_size=1,
+                    comm_group_size=self.args.pipeline_model_parallel_size,
                     msg_size=2
                     * (args.hidden_size * args.seq_length * args.micro_batch),
                     stage="forward_step",
@@ -235,7 +235,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.irecv,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="forward_step",
@@ -247,7 +247,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.isend,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="forward_step",
@@ -264,7 +264,7 @@ class MegatronWorkload(WorkloadGenerator):
                         LogItem(
                             comm_type=CommType.isend,
                             comm_group=CommGroup.pp_group,
-                            comm_group_size=1,
+                            comm_group_size=self.args.pipeline_model_parallel_size,
                             msg_size=2
                             * (args.hidden_size * args.seq_length * args.micro_batch),
                             stage="backward_step",
@@ -277,7 +277,7 @@ class MegatronWorkload(WorkloadGenerator):
                         LogItem(
                             comm_type=CommType.isend,
                             comm_group=CommGroup.pp_group,
-                            comm_group_size=1,
+                            comm_group_size=self.args.pipeline_model_parallel_size,
                             msg_size=2
                             * (args.hidden_size * args.seq_length * args.micro_batch),
                             stage="backward_step",
@@ -288,7 +288,7 @@ class MegatronWorkload(WorkloadGenerator):
                         LogItem(
                             comm_type=CommType.irecv,
                             comm_group=CommGroup.pp_group,
-                            comm_group_size=1,
+                            comm_group_size=self.args.pipeline_model_parallel_size,
                             msg_size=2
                             * (args.hidden_size * args.seq_length * args.micro_batch),
                             stage="backward_step",
@@ -303,7 +303,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.irecv,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="backward_step",
@@ -319,7 +319,7 @@ class MegatronWorkload(WorkloadGenerator):
                     LogItem(
                         comm_type=CommType.isend,
                         comm_group=CommGroup.pp_group,
-                        comm_group_size=1,
+                        comm_group_size=self.args.pipeline_model_parallel_size,
                         msg_size=2
                         * (args.hidden_size * args.seq_length * args.micro_batch),
                         stage="backward_step",
