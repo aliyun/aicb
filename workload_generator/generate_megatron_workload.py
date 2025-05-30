@@ -17,7 +17,7 @@ python -m workload_generator.megatron_workload \
   --frame=Megatron --world_size=16 --tensor_model_parallel_size=8 --pipeline_model_parallel=1 --global_batch=64 --micro_batch=2 \
   --num_layers=32 --seq_length=2048 --hidden_size=4096 --epoch_num=2 --use-distributed-optimizer --enable_sequence_parallel
 """
-from utils.utils import CommGroup, CommType, get_params, WorkloadWriter
+from utils.utils import CommGroup, CommType, get_params, WorkloadWriter, num_parameters_to_bytes
 from workload_generator.workload_generator import WorkloadGenerator
 from workload_generator.mocked_model.MockedMegatron import MegatronModel
 from log_analyzer.log import LogItem
@@ -438,6 +438,14 @@ if __name__ == "__main__":
     workload = workload_generator()
     filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"
     workload.dump(filename)
+    params = model.parameters()
+    args.model_param = sum(p.numel() for p in params)
+    args.activation_memory = 0
+    for sub_module in model.child_modules():
+        if hasattr(sub_module, "activation_memory"):
+            args.activation_memory += sub_module.activation_memory()
+    print("model_param:", num_parameters_to_bytes(args.model_param))
+    print("activation_memory:", num_parameters_to_bytes(args.activation_memory))
     if args.enable_visual:
             try:
                 from visualize.generate import visualize_output
