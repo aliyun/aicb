@@ -59,23 +59,6 @@ class MegatronModel(torch.nn.Module):
         self.grad_param = Grad_param(self.args)
 
     def forward(self, input):
-        # if self.args.warm_up:
-        #     for _ in range(10):
-
-        #         layernorm = self.Layernorm._apply()
-        #         atten_qkv = self.Attention._apply_attenqkv()
-        #         if self.args.use_flash_attn :
-        #             atten_core = self.Attention._apply_flash_atten()
-        #         else:
-        #             atten_core_qk = self.Attention._apply_QK()
-        #             atten_core_softmax = self.Attention._apply_Softmax()
-        #             atten_core_contex = self.Attention._apply_Contex()
-        #         atten_linear = self.Attention._apply_Linear()
-        #         layernorm2 = self.Layernorm._apply()
-        #         mlp_linear_1 = self.Mlp._apply_Linear1()
-        #         mlp_gelu = self.Mlp._apply_activation()
-        #         mlp_linear_2 = self.Mlp._apply_Linear2()
-
         for _ in range(self.args.epoch_num):
             # #Embedding
             Emb_output, Emb_time = self.Embedding(input)
@@ -304,13 +287,6 @@ class MegatronEmbedding(torch.nn.Module):
 
     @cuda_timing_decorator
     def _apply(self, input):
-        # words_embeddings = F.embedding(self.masked_input,
-        #                                self.weight,
-        #                                 None, None,
-        #                                 2.0, False,
-        #                                 False)
-        # input_ = input
-
         if self.tp > 1:
             # Build the mask.
             input_mask = (input < 0) | (input >= math.ceil(self.vocab_size / self.tp))
