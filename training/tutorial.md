@@ -45,7 +45,7 @@ export WORLD_SIZE=1
 export RANK=0
 
 sh ./scripts/megatron_gpt.sh \
--m 13 --world_size 8 --tensor_model_parallel_size 8 --pipeline_model_parallel 1 \
+-m 13 --world_size 8 --tensor_model_parallel_size 8 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 2  \
 --micro_batch 1 --seq_length 4096 \
 --swiglu --use_flash_attn  --aiob_enable  
@@ -107,7 +107,7 @@ We provide four pre-existing models (7/13/22/175)B to quickly generate the corre
 Below is an example of generating a Workload with a model size of 7B, tp 4, pp 1, a total GPU count of 4096, gbs 8192, mbs 1, sequence length of 4096, with flash_attn, swiglu, and aiob enabled, and reading Example.txt as the computation time.
 ```bash
 sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
---world_size 4096 --tensor_model_parallel_size 4 --pipeline_model_parallel 1 \
+--world_size 4096 --tensor_model_parallel_size 4 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 8192 \
 --micro_batch 1 --seq_length 4096 --swiglu \
 --use_flash_attn  --aiob_enable \
@@ -140,7 +140,7 @@ The main parameters for AICB are as follows:
 |                              | max_position_embeddings           | Maximum number of position embeddings to use.                               |
 |                              | ffn_hidden_size                   | Transformer Feed-Forward Network hidden size.                               |
 | Megatron parallel parameters | tensor_model_parallel_size        | Degree of tensor model parallelism.                                         |
-|                              | pipeline_model_parallel           | Degree of pipeline model parallelism.                                       |
+|                              | pipeline_model_parallel_size      | Degree of pipeline model parallelism.                                       |
 |                              | enable_sequence_parallel          | Enable sequence parallel optimization.                                      |
 | Megatron optimization parameters | use_flash_attn                | Use FlashAttention implementation of attention.                             |
 |                              | swiglu                            | Use gated linear units and SiLU activation instead of default gelu          |
@@ -210,7 +210,7 @@ Here is an example:
 ```bash
 python -m workload_generator.AIOB_simAI_workload_generator \
   --model_name GPT-13B --frame=Megatron \
-  --world_size=16 --tensor_model_parallel_size=2 --pipeline_model_parallel=1 --global_batch=16 \
+  --world_size=16 --tensor_model_parallel_size=2 --pipeline_model_parallel_size=1 --global_batch=16 \
   --micro_batch=1   --num_layers=40 --seq_length=2048 \
   --hidden_size=5120 --epoch_num=1 \
   --use-distributed-optimizer --num_attention_heads=40 \
@@ -288,7 +288,7 @@ Here is a brief example of training process and workload item:
 ```python
 trainer.init()
 for _ in range(epoch_num):
-    if pipeline_model_parallel > 1:
+    if pipeline_model_parallel_size > 1:
         trainer.with_pipeline_forward_backward()
     else:
         for _ in range(num_microbatches):

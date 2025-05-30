@@ -31,7 +31,7 @@ class WorkloadGenerator:
         self.init()
         self.workload.append(LogItem(comm_type=CommType.epoch_end))
         for i in range(args.epoch_num):
-            if args.pipeline_model_parallel > 1 and args.frame != "collective_test":
+            if args.pipeline_model_parallel_size > 1 and args.frame != "collective_test":
                 self.with_pipeline_forward_backward()
                 self.step()
             else:

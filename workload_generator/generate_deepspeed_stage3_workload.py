@@ -35,7 +35,7 @@ class DeepSpeedStage3(WorkloadGenerator):
         super().__init__(args, model)
         self.name = "deepspeed_stage3"
         self.amp_enabled = args.amp_enabled
-        self.dp_world_size = args.dp_num
+        self.dp_world_size = args.data_parallel_size
         self.batch_size = args.micro_batch
         self.seq_len = args.seq_length
         self.compute_enable = args.computation_enable
