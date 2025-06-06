@@ -742,3 +742,18 @@ def divide(numerator, denominator):
     the division value."""
     ensure_divisibility(numerator, denominator)
     return numerator // denominator
+
+def num_parameters_to_bytes(num_params: int, dtype="bfloat16"):
+    if dtype == "float":
+        bytes_per_elem = 4
+    elif dtype == "float16" or dtype == "bfloat16":
+        bytes_per_elem = 2
+    else:
+        raise ValueError(f"dtype should be float, float16 or bfloat16, got {dtype}")
+    
+    total_bytes = bytes_per_elem * num_params
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if total_bytes < 1024:
+            return f"{total_bytes:.2f} {unit}"
+        total_bytes /= 1024
+    return f"{total_bytes:.2f} GB"
