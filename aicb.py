@@ -55,6 +55,7 @@ if __name__ == "__main__":
             if hasattr(sub_module, "activation_memory"):
                 args.activation_memory += sub_module.activation_memory()
         print("model_param:", args.model_param)
+        print("activation_memory:", args.activation_memory)
         if args.comp_filepath == None:
             local_rank = torch.distributed.get_rank() % torch.cuda.device_count()
             if local_rank == 0:
