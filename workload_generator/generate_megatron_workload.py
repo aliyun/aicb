@@ -444,8 +444,8 @@ if __name__ == "__main__":
     for sub_module in model.child_modules():
         if hasattr(sub_module, "activation_memory"):
             args.activation_memory += sub_module.activation_memory()
-    print("model_param:", num_parameters_to_bytes(args.model_param))
-    print("activation_memory:", num_parameters_to_bytes(args.activation_memory))
+    print(f"model_param: {num_parameters_to_bytes(args, args.model_param)}")
+    print(f"activation_memory: {num_parameters_to_bytes(args, args.activation_memory)}")
     if args.enable_visual:
             try:
                 from visualize.generate import visualize_output
