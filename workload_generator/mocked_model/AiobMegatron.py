@@ -319,7 +319,7 @@ class MegatronLayernorm(torch.nn.Module):
         super(MegatronLayernorm, self).__init__()
         self.tp = args.tensor_model_parallel_size
         self.enable_sequence_parallel = args.enable_sequence_parallel
-        hidden_size = args.hidden_size
+        self.hidden_size = args.hidden_size
         device = torch.cuda.current_device()
         if args.dtype == "bfloat16":
             self.dtype = torch.bfloat16
@@ -331,15 +331,21 @@ class MegatronLayernorm(torch.nn.Module):
         #                           micro_batch,
         #                           hidden_size,
         #                           device=device).to(dtype)
-        self.lay_weight = torch.rand(hidden_size, device=device).to(self.dtype)
-        self.bias = torch.zeros(hidden_size, device=device).to(self.dtype)
+        self.lay_weight = torch.rand(self.hidden_size, device=device).to(self.dtype)
+        self.bias = torch.zeros(self.hidden_size, device=device).to(self.dtype)
 
     @cuda_timing_decorator
-    def _apply(self, hidden_states):
+    def _apply_fused_layer_norm(self, hidden_states):
         output_lay = FastLayerNormFN.apply(
             hidden_states, self.lay_weight, self.bias, 1e-05
         )
+        return output_lay
 
+    @cuda_timing_decorator
+    def _apply_torch_layernorm(self, hidden_states):
+        output_lay = torch.nn.functional.layer_norm(
+            hidden_states, [self.hidden_size] , self.lay_weight, self.bias, 1e-05
+        )
         return output_lay
 
     def forward(self, hidden_states):
@@ -348,7 +354,19 @@ class MegatronLayernorm(torch.nn.Module):
             chunks = torch.chunk(hidden_states, self.tp, 0)
             hidden_states = chunks[0]
 
-        lay_out, lay_time = self._apply(hidden_states)
+        # in case of DeepSeek16B, for Hidden size 10944, FastLayerNormFN fails with
+        # FWD: Unsupported hidden_size or types: 10944BFloat16BFloat16BFloat16Float
+        # because https://github.com/NVIDIA/apex/blob/4bdecd06b3c4b2c0a8fb6603829a8f9f05a42b49/apex/contrib/csrc/layer_norm/ln_fwd_cuda_kernel.cu#L73-L227
+        # thus, use torch's layer_norm
+
+        # try Fused, if exception, use torch
+        try:
+            lay_out, lay_time = self._apply_fused_layer_norm(hidden_states)
+        except Exception as e:
+            print(f"FastLayerNormFN failed with error {e}, using torch.nn.functional.layer_norm")
+            lay_out, lay_time = self._apply_torch_layernorm(hidden_states)
+
+
         if self.enable_sequence_parallel:
             lay_out = lay_out.repeat((self.tp, 1, 1))
 
