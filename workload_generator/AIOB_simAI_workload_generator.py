@@ -905,6 +905,13 @@ if __name__ == "__main__":
         )
         name_layers = work.workload_generate_aiob()
 
+        # set comm_size = 0 for any comm_type == NONE
+        for i in range(len(work.workload)):
+            if work.workload[i].forward_comm == "NONE":
+                work.workload[i].forward_comm_size = 0
+            if work.workload[i].backward_comm == "NONE":
+                work.workload[i].backward_comm_size = 0
+
         work.dump_file(filepath)
         print("workload save in :", filepath)
     # print(args)
