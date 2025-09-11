@@ -22,6 +22,9 @@ from workload_generator.mocked_model.MockedModel import MockedModel
 from workload_generator.mocked_model.MockedMegatron import *
 from utils.utils import CommGroup, CommType
 
+# multiplier to convert BF16 to (FP8 + FP32 scale)
+# from https://github.com/deepseek-ai/DeepEP/blob/ef70b83e3b35a84aadc5385b02c95c5d1bcf299c/tests/test_internode.py#L194
+FP8_FACTOR = (1 + 4 / 128) / 2
 
 class DeepSeekLinear(MockedModel):
     """
@@ -249,6 +252,7 @@ class DeepSeekMoE(MockedModel):
         self.layer_id = id
         self.name = "mlp_moelayer"
         self.layer_id = id
+        self.expert_model_parallel_size = expert_model_parallel_size
         num_local_experts = num_experts // expert_model_parallel_size
         fc1_output_size = ffn_hidden_size * num_local_experts
         fc1_output_size_per_parttition = divide(fc1_output_size, tp)
@@ -279,7 +283,6 @@ class DeepSeekMoE(MockedModel):
 
     def permutation(self, stage):
         workloads = Workload()
-        # FP8 dispatch, include input/128 matrix for scale
         if self.tp_size > 1:
             workloads.append(
                 LogItem(
@@ -292,17 +295,17 @@ class DeepSeekMoE(MockedModel):
                         * self.batch_size
                         // self.tp_size
                     )
-                    + (
-                        self.seq_len
-                        * self.hidden_size
-                        * self.batch_size
-                        // self.tp_size
-                        // 128
-                    ),
+                    * 2,
                     stage=f"{stage}.MoE",
                 )
             )
-        # FP8 dispatch
+        # only for FWD
+        # FP8 dispatch, include input/128 matrix for scale
+        # based on DeepEP https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
+        if stage == "forward":
+            scaled = FP8_FACTOR
+        else:
+            scaled = 1
         workloads.append(
             LogItem(
                 comm_type=CommType.all_to_all,
@@ -310,13 +313,8 @@ class DeepSeekMoE(MockedModel):
                 msg_size=(
                     self.seq_len * self.hidden_size * self.batch_size // self.tp_size
                 )
-                + (
-                    self.seq_len
-                    * self.hidden_size
-                    * self.batch_size
-                    // self.tp_size
-                    // 128
-                ),
+                * 2
+                * scaled,
                 stage=f"{stage}.MoE",
             )
         )
@@ -328,13 +326,7 @@ class DeepSeekMoE(MockedModel):
                     msg_size=(
                         self.hidden_size * self.topk * self.batch_size * self.seq_len
                     )
-                    + (
-                        self.hidden_size
-                        * self.topk
-                        * self.batch_size
-                        * self.seq_len
-                        // 128
-                    ),
+                    * 2,
                     stage=f"{stage}.MoE.permutation",
                 )
             )
@@ -349,11 +341,11 @@ class DeepSeekMoE(MockedModel):
                 LogItem(
                     comm_type=CommType.reduce_scatter,
                     comm_group=CommGroup.tp_group,
-                    msg_size=2
-                    * self.hidden_size
+                    msg_size=self.hidden_size
                     * self.batch_size
                     * self.topk
-                    * self.seq_len,
+                    * self.seq_len
+                    * 2,
                     stage=f"{stage}.MoE.unpermutation",
                 )
             )
@@ -365,7 +357,7 @@ class DeepSeekMoE(MockedModel):
                 msg_size=self.seq_len
                 * self.hidden_size
                 * self.batch_size
-                * self.topk
+                * self.expert_model_parallel_size
                 // self.tp_size
                 * 2,
                 stage=f"{stage}.MoE",
