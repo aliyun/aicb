@@ -148,10 +148,10 @@ class DeepSeekMLA(MockedModel):
             seq_len,
             batch_size,
             layer_id,
-            "attention",
+            "attention_q",
             sequence_parallel_enabled,
             computation_enable,
-            name="attention_column",
+            name="attention_q_column",
             add_bias_linear=add_bias_linear,
         )
 
@@ -174,10 +174,10 @@ class DeepSeekMLA(MockedModel):
             seq_len,
             batch_size,
             layer_id,
-            "attention",
+            "attention_kv",
             sequence_parallel_enabled,
             computation_enable,
-            name="attention_column",
+            name="attention_kv_column",
             add_bias_linear=add_bias_linear,
         )
         self.wo = MegatronRowLinear(
@@ -187,10 +187,10 @@ class DeepSeekMLA(MockedModel):
             seq_len,
             batch_size,
             layer_id,
-            "attention",
+            "attention_o",
             sequence_parallel_enabled,
             computation_enable,
-            name="attention_row",
+            name="attention_o_row",
             add_bias_linear=add_bias_linear,
         )
 

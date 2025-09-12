@@ -52,8 +52,13 @@ class Work_Item:
 
 
 
-def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
+def _get_aiob_compute_time(compute_cache, forward_or_backward, stage, dowarn=True):
     compute_time_map = compute_cache
+
+    # if compute time with exact layer name exist, use it without prefix
+    if stage in compute_time_map.keys():
+        return compute_time_map[stage]
+
     if stage == "grad":
         prefix = stage + "_" + forward_or_backward
     elif stage == "embedding":
@@ -68,8 +73,9 @@ def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
 
             compute_time = compute_time_map.get(key)
             return compute_time
-
-    print("[warn] can't match any stage", stage)
+    # just so it doesn't spam warning when trying to get per-layer comp time
+    if dowarn:
+        print("[warn] can't match any stage", stage)
     return 1
 
 
@@ -270,6 +276,16 @@ class SIMAI_workload:
                 backward_comm_size = 0
                 dp_comm = "NONE"
                 dp_comm_size = 0
+
+                # try get layer specific compute time
+                # e.g. from AiobDeepSeek.DeepSeekMLA's compute times
+                layer_comp_time = _get_aiob_compute_time(
+                    self.compute_cache, "", name, False
+                )
+                # _get_aiob_compute_time return 1 in case no compute time found
+                if layer_comp_time == 1:
+                    layer_comp_time = None
+
                 if self.args.enable_sequence_parallel:
                     if "embedding" in name:
                         if args.tensor_model_parallel_size == 1 :
@@ -299,12 +315,16 @@ class SIMAI_workload:
                         # for non-shareded linear in attention block
 
                         # similar to row linear but without comms
-                        forward_compute_time=_get_aiob_compute_time(
-                            self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time=_get_aiob_compute_time(
+                                self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
                         if self.args.recompute_activations:
                             forward_compute_time *= 2
                         self.workload.append(
@@ -323,12 +343,16 @@ class SIMAI_workload:
                         )
                     if "row" in name:
                         
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
 
                         if self.args.recompute_activations and 'attention' in name:
                             forward_compute_time *= 2
@@ -357,12 +381,16 @@ class SIMAI_workload:
                             )
 
                     elif "column" in name:
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
 
                         if self.args.recompute_activations and 'attention' in name:
                             forward_compute_time *= 2
@@ -391,12 +419,16 @@ class SIMAI_workload:
                                 )
                             )
                     elif "moelayer" in name:
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
                         if args.tensor_model_parallel_size == 1 :
                             forward_comm1 = "NONE"
                             forward_comm2 = "NONE"
@@ -524,12 +556,16 @@ class SIMAI_workload:
                             )
                         )
                     else:
-                        forward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
                         self.workload.append(
                             Work_Item(
                                 name=name,

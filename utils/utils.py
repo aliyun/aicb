@@ -296,6 +296,17 @@ def extract_averages(file_path,args):
     time_gpu_avg_re = re.compile(r"time_gpu_avg:\s+(\d+(\.\d+)?)")
     time_gpu_min_re = re.compile(r"time_gpu_min:\s+(\d+(\.\d+)?)")
 
+    # from DeepSeek's MLA per-layers compute
+    # must match with that of AiobDeepSeek->DeepSeekMLA's return from forward()
+    # FIXME: this should be more generic
+    per_layer_time_map = {
+        "attention_linear_q_lora": 0,
+        "attention_q_column": 0,
+        "attention_linear_kv_lora": 0,
+        "attention_kv_column": 0,
+        "attention_o_row": 0
+    }
+
     with open(file_path, "r") as file:
         current_section = None
 
@@ -314,7 +325,7 @@ def extract_averages(file_path,args):
             elif avg_match and current_section:
                 avg_value = float(avg_match.group(1)) * 1000
                 if "atten" in current_section or current_section == "layernorm":
-                    
+
                     if args.recompute_activations and 'flash' in current_section:
                         attention_avg_sum += avg_value*2
                     else:
@@ -323,6 +334,10 @@ def extract_averages(file_path,args):
                     mlp_avg_sum += avg_value
                 else:
                     other_avgs[current_section] = avg_value
+
+                if current_section in per_layer_time_map.keys():
+                    per_layer_time_map[current_section] = round(avg_value)
+
 
     # 四舍五入并转换为整数
     attention_forward = round(attention_avg_sum)
@@ -342,6 +357,7 @@ def extract_averages(file_path,args):
         "grad_backward": grad_backward,
     }
     a100_compute_cache.update(other_avgs_int)
+    a100_compute_cache.update(per_layer_time_map)
 
     return a100_compute_cache
 

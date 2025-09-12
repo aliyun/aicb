@@ -38,7 +38,7 @@ except ImportError:
     except ImportError:
         flash_attn_unpadded_func = None
 
-from workload_generator.mocked_model.AiobDeepSeek import DeepSeekMoE
+from workload_generator.mocked_model.AiobDeepSeek import DeepSeekMoE, DeepSeekMLA
 
 class MegatronModel(torch.nn.Module):
     def __init__(self, args=None):
@@ -48,10 +48,13 @@ class MegatronModel(torch.nn.Module):
 
         self.Embedding = MegatronEmbedding(self.args)
         self.Layernorm = MegatronLayernorm(self.args)
-        if self.args.use_flash_attn:
-            self.Attention = MegatronFlashAtten(self.args)
-        else:
-            self.Attention = MegatronAtten(self.args)
+        if args.frame == "DeepSeek":
+            self.Attention = DeepSeekMLA(self.args)
+        if args.frame == "Megatron":
+            if self.args.use_flash_attn:
+                self.Attention = MegatronFlashAtten(self.args)
+            else:
+                self.Attention = MegatronAtten(self.args)
         if self.args.moe_enable:
             if self.args.frame == "DeepSeek":
                 self.Mlp = DeepSeekMoE(self.args)
@@ -74,43 +77,50 @@ class MegatronModel(torch.nn.Module):
                 self.time_list.setdefault("layernorm", []).append(
                     {"time_gpu": layernorm}
                 )
-                if self.args.use_flash_attn:
-                    atten_output, atten_qkv, atten_core, atten_linear = self.Attention(
-                        lay_out
-                    )
-                    self.time_list.setdefault("atten_qkv", []).append(
-                        {"time_gpu": atten_qkv}
-                    )
-                    self.time_list.setdefault("atten_flash", []).append(
-                        {"time_gpu": atten_core}
-                    )
-                    self.time_list.setdefault("atten_linear", []).append(
-                        {"time_gpu": atten_linear}
-                    )
-                else:
-                    (
-                        atten_output,
-                        atten_qkv,
-                        atten_core_qk,
-                        atten_core_softmax,
-                        atten_core_contex,
-                        atten_linear,
-                    ) = self.Attention(lay_out)
-                    self.time_list.setdefault("atten_qkv", []).append(
-                        {"time_gpu": atten_qkv}
-                    )
-                    self.time_list.setdefault("atten_core_qk", []).append(
-                        {"time_gpu": atten_core_qk}
-                    )
-                    self.time_list.setdefault("atten_core_softmax", []).append(
-                        {"time_gpu": atten_core_softmax}
-                    )
-                    self.time_list.setdefault("atten_core_contex", []).append(
-                        {"time_gpu": atten_core_contex}
-                    )
-                    self.time_list.setdefault("atten_linear", []).append(
-                        {"time_gpu": atten_linear}
-                    )
+                if self.args.frame == "DeepSeek":
+                    atten_output, time_map = self.Attention(lay_out)
+                    for k, v in time_map.items():
+                        self.time_list.setdefault(k, []).append(
+                            {"time_gpu": v}
+                        )
+                if self.args.frame == "Megatron":
+                    if self.args.use_flash_attn:
+                        atten_output, atten_qkv, atten_core, atten_linear = self.Attention(
+                            lay_out
+                        )
+                        self.time_list.setdefault("atten_qkv", []).append(
+                            {"time_gpu": atten_qkv}
+                        )
+                        self.time_list.setdefault("atten_flash", []).append(
+                            {"time_gpu": atten_core}
+                        )
+                        self.time_list.setdefault("atten_linear", []).append(
+                            {"time_gpu": atten_linear}
+                        )
+                    else:
+                        (
+                            atten_output,
+                            atten_qkv,
+                            atten_core_qk,
+                            atten_core_softmax,
+                            atten_core_contex,
+                            atten_linear,
+                        ) = self.Attention(lay_out)
+                        self.time_list.setdefault("atten_qkv", []).append(
+                            {"time_gpu": atten_qkv}
+                        )
+                        self.time_list.setdefault("atten_core_qk", []).append(
+                            {"time_gpu": atten_core_qk}
+                        )
+                        self.time_list.setdefault("atten_core_softmax", []).append(
+                            {"time_gpu": atten_core_softmax}
+                        )
+                        self.time_list.setdefault("atten_core_contex", []).append(
+                            {"time_gpu": atten_core_contex}
+                        )
+                        self.time_list.setdefault("atten_linear", []).append(
+                            {"time_gpu": atten_linear}
+                        )
                 # layernorm
                 lay2_out, layernorm2 = self.Layernorm(atten_output)
 
