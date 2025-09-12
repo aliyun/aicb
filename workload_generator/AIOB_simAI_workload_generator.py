@@ -414,26 +414,15 @@ class SIMAI_workload:
                             forward_comm6 = "ALLTOALL_EP"
                             forward_comm7 = "ALLTOALL"
                         if args.expert_model_parallel_size != 1:
+                            fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                            bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                            ep_combine_size = tp_comm_size * self.topk // self.tp
 
                             if self.args.frame == "DeepSeek":
                                 # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
                                 # only fprop does the FP8
-                                fwd_ep_dispatch_size = (
-                                    tp_comm_size // self.tp
-                                ) * MockedDeepSeek.FP8_FACTOR
-
-                                # BF16 for bkwd dispatch
-                                bkwd_ep_dispatch_size = (
-                                    tp_comm_size // self.tp
-                                )
-                                # BF16 for both FWD/BKWD combine
-                                ep_combine_size = (
-                                    tp_comm_size * self.expert_model_parallel_size // self.tp
-                                )
-                            else:
-                                fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
-                                bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
-                                ep_combine_size = tp_comm_size * self.topk // self.tp
+                                fwd_ep_dispatch_size *= MockedDeepSeek.FP8_FACTOR
+                                # rest of the comm shapes are similar to megatron
 
                             self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
                                         forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,

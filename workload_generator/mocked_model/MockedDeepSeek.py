@@ -311,7 +311,7 @@ class DeepSeekMoE(MockedModel):
                 comm_type=CommType.all_to_all,
                 comm_group=CommGroup.ep_group,
                 msg_size=(
-                    self.seq_len * self.hidden_size * self.batch_size // self.tp_size
+                    self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
                 )
                 * 2
                 * scaled,
@@ -357,7 +357,7 @@ class DeepSeekMoE(MockedModel):
                 msg_size=self.seq_len
                 * self.hidden_size
                 * self.batch_size
-                * self.expert_model_parallel_size
+                * self.topk
                 // self.tp_size
                 * 2,
                 stage=f"{stage}.MoE",
