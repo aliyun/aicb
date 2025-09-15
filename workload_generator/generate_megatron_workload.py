@@ -20,6 +20,7 @@ python -m workload_generator.megatron_workload \
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter, num_parameters_to_bytes
 from workload_generator.workload_generator import WorkloadGenerator
 from workload_generator.mocked_model.MockedMegatron import MegatronModel
+from workload_generator.mocked_model.MockedDeepSeek import DeepSeekV3Model
 from log_analyzer.log import LogItem
 
 
@@ -433,7 +434,10 @@ class MegatronWorkload(WorkloadGenerator):
 
 if __name__ == "__main__":
     args = get_params()
-    model = MegatronModel(args)
+    if args.frame == "DeepSeek":
+        model = DeepSeekV3Model(args)
+    elif args.frame == "Megatron":
+        model = MegatronModel(args)
     workload_generator = MegatronWorkload(args, model)
     workload = workload_generator()
     filename = f"{workload_generator.name}_{args.model_name}_sp_{args.enable_sequence_parallel}_iteration_{args.epoch_num}_computationEnable_{args.computation_enable}_{args.world_size}n.csv"

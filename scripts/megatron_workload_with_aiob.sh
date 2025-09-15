@@ -46,7 +46,7 @@ usage() {
       --ffn_hidden_size         FFN hidden size
       --comp_filepath           computation file path
       --max_position_embeddings max position embeddings, defaults to $max_position_embeddings
-      -m, --model_size          model size, defaults to $model_size (possible values: 175, 22, 13, 7, moe)
+      -m, --model_size          model size, defaults to $model_size (possible values: 175, 22, 13, 7, moe, deepseek671, deepseek236, deepseek16)
       --moe_enable             enable moe
       --moe_router_topk         Number of experts to route to for each token.
       --expert_model_parallel_size     Degree of expert model parallelism
@@ -166,6 +166,67 @@ case $model_size in
     moe_enable=--moe_enable
     grouped_gemm=--moe_grouped_gemm
     ;;
+  deepseek671)
+    model_name=DeepSeek_671B
+    frame=DeepSeek
+    moe_enable=--moe_enable
+    num_layers=61
+    hidden_size=18432
+    num_attention_heads=128
+    ffn_hidden_size=2048
+    q_lora_rank=1536
+    kv_lora_rank=512
+    qk_nope_dim=128
+    qk_rope_dim=64
+    v_head_dim=128
+    num_experts=256
+    n_shared_expert=1
+    n_dense_layer=3
+    tensor_model_parallel_size=1
+    ;;
+  deepseek236)
+    model_name=DeepSeek_236B
+    frame=DeepSeek
+    moe_enable=--moe_enable
+    num_layers=60
+    hidden_size=12288
+    num_attention_heads=128
+    ffn_hidden_size=1536
+    q_lora_rank=1536
+    kv_lora_rank=512
+    qk_nope_dim=128
+    qk_rope_dim=64
+    v_head_dim=128
+    num_experts=160
+    n_shared_expert=2
+    n_dense_layer=1
+    tensor_model_parallel_size=1
+    ;;
+  deepseek16)
+    model_name=DeepSeek_16B
+    frame=DeepSeek
+    moe_enable=--moe_enable
+    num_layers=27
+    hidden_size=10944
+    num_attention_heads=16
+    ffn_hidden_size=1408
+    q_lora_rank=0
+    kv_lora_rank=512
+    qk_nope_dim=128
+    qk_rope_dim=64
+    v_head_dim=128
+    num_experts=64
+    n_shared_expert=2
+    n_dense_layer=1
+    tensor_model_parallel_size=1
+    ;;
+  deepseek)
+    frame=DeepSeek
+    model_name="DeepSeek"
+    moe_enable=--moe_enable
+    ;;
+    # set everything else from cmdline
+    # or it defaults to utils/utils.py's arg parser
   (*)
     echo "Only support model size 175, 22,13 or 7; using default size 13"
     model_name=gpt_13B
@@ -204,7 +265,15 @@ cmd="python -m workload_generator.AIOB_simAI_workload_generator \
   ${moe_router_topk:+--moe_router_topk=$moe_router_topk} \
   ${num_experts:+--num_experts=$num_experts} \
   ${expert_model_parallel_size:+--expert_model_parallel_size=$expert_model_parallel_size} \
-  ${grouped_gemm} " \
+  ${grouped_gemm} \
+  ${q_lora_rank:+--q_lora_rank=$q_lora_rank} \
+  ${kv_lora_rank:+--kv_lora_rank=$kv_lora_rank} \
+  ${qk_nope_dim:+--qk_nope_dim=$qk_nope_dim} \
+  ${qk_rope_dim:+--qk_rope_dim=$qk_rope_dim} \
+  ${v_head_dim:+--v_head_dim=$v_head_dim} \
+  ${n_shared_expert:+--n_shared_expert=$n_shared_expert} \
+  ${n_dense_layer:+--n_dense_layer=$n_dense_layer} \
+  " \
 
 echo $cmd
 

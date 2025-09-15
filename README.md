@@ -49,11 +49,13 @@ Bug Fixes
     - [Running workloads for Megatron](#running-workloads-for-megatron)
     - [Running workloads for MOE](#running-workloads-for-moe)
     - [Running workloads for DeepSpeed](#running-workloads-for-deepspeed)
+    - [Running workloads for DeepSeek](#running-workloads-for-deepseek)
     - [Embedding the compuation patterns in the workload](#embedding-the-compuation-patterns-in-the-workload)
   - [Generate Workloads for Simulation (SimAI)](#generate-workloads-for-simulation-simai)
     - [Generating the workload description files for the whole benchmark suite](#generating-the-workload-description-files-for-the-whole-benchmark-suite)
     - [Generating the workload description files for Megatron](#generating-the-workload-description-files-for-megatron)
     - [Generating the workload description files for Moe](#generating-the-workload-description-files-for-moe)
+    - [Generating the workload description files for DeepSeek](#generating-the-workload-description-files-for-deepseek)
     - [Generating the workload description files for DeepSpeed](#generating-the-workload-description-files-for-deepspeed)
   - [Running AICB with customized parameters](#running-aicb-with-customized-parameters)
     - [Running customized workloads on physical GPU clusters](#running-customized-workloads-on-physical-gpu-clusters)
@@ -165,6 +167,25 @@ sh scripts/deepspeed_llama.sh \
 --reduce_bucket_size=1000000000 --allgather_bucket_size=500000000 \
 --param_persistence_threshold=1000000 \
 ```
+
+### Running workloads for DeepSeek
+
+For `DeepSeek`, one can use the [scripts/megatron_gpt.sh](./scripts/megatron_gpt.sh) with `--frame=DeepSeek`
+
+```bash
+sh scripts/megatron_gpt.sh \
+  --frame DeepSeek \
+  --tensor_model_parallel_size 4 \
+  --pipeline_model_parallel 1 \
+  --moe_enable \
+  --expert_model_parallel_size 1 \
+  --global_batch 4 \
+  -m deepseek \
+  --num_experts 4 \
+  --micro_batch 1 \
+  --sp --swiglu --world_size 4 --num_layers 10 --aiob_enable
+```
+
 ### Embedding the compuation patterns in the workload
 To mirror the real-world workloads with both computation and communicaiton, we developed a sub-module, AIOB, that is used to generate computation patterns.
 In AICB, we can enable AIOB to embed the computation time into the workloads.
@@ -196,7 +217,7 @@ sh scripts/megatron_gpt.sh \
 ## Generate Workloads for Simulation (SimAI)
 In addition to running the AICB in the GPU clusters, AICB also generates the workload description files which can be used for simulation or further analysis.
 In this release, we provide [scripts](scripts/megatron_workload_with_aiob.sh) for quickly generating workloads for SimAI.
-For now MLA and Linear Attention Models are not supported. To customize your own workloads, please refer to [Customized parameters](workload_generator/mocked_model/MockedModel.py) and add new models.
+For now Linear Attention Models are not supported. To customize your own workloads, please refer to [Customized parameters](workload_generator/mocked_model/MockedModel.py) and add new models.
 
 ### Generating the workload description files for the whole benchmark suite
 You can generate all the workload description files with [generate_suite]() as specified in our AICB workload spec v1.0. Once these files are created, you can execute them using the SimAI to test and analyze various scenarios.
@@ -231,6 +252,19 @@ sh scripts/megatron_workload_with_aiob.sh \
 --frame Megatron --global_batch 1024  \
 --micro_batch 1 --seq_length 4096 --swiglu \
 --use_flash_attn  --aiob_enable 
+```
+
+### Generating the workload description files for DeepSeek
+
+For the DeepSeek, you can also use [scripts/megatron_workload_with_aiob.sh](scripts/megatron_workload_with_aiob.sh)
+
+```bash
+sh scripts/megatron_workload_with_aiob.sh \
+-m deepseek16 --world_size 2048 --tensor_model_parallel_size 1 --pipeline_model_parallel 1 --sp --ep 16 \
+--moe_router_topk 6 --moe_enable  \
+--frame DeepSeek --global_batch 4096 \
+--micro_batch 1 --seq_length 4096 --swiglu \
+--aiob_enable
 ```
 
 ### Generating the workload description files for DeepSpeed

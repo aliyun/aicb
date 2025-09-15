@@ -36,7 +36,7 @@ When running on a physical machine, additional configuration for PyTorch-related
 ### Quick start for single-node execution
 The script for running AICB on a physical machine is：[/scripts/megatron_workload_with_aiob.sh](../scripts/megatron_workload_with_aiob.sh)
 
-We provide four pre-existing models (7/13/22/175/)B and moe to quickly launch and run on a physical machine, which can be specified using the parameter `--model_size`. Additionally, the Megatron parallel framework supports enabling the aiob_enable option to obtain the computation time for each operation of the actual model. Without using aiob, only fixed waiting times can be filled. Alternatively, when AIOB is enabled, you can specify `--comp_filepath` to fill in the corresponding computation time.
+We provide four pre-existing models (7/13/22/175/)B, moe, and DeepSeek (16/236/671)B to quickly launch and run on a physical machine, which can be specified using the parameter `--model_size`. Additionally, the Megatron parallel framework supports enabling the aiob_enable option to obtain the computation time for each operation of the actual model. Without using aiob, only fixed waiting times can be filled. Alternatively, when AIOB is enabled, you can specify `--comp_filepath` to fill in the corresponding computation time.
 Below is an example of generating a Workload with a model size of 13B, tp 8, pp 1, a total GPU count of 8, gbs 2, mbs 1, sequence length of 4096, with flash_attn and swiglu enabled, and using AIOB to obtain the computation time for each operation of the actual model.
 ``` bash
 export MASTER_ADDR=127.0.0.1
@@ -103,7 +103,7 @@ By leveraging these log files and parsing methods, you can perform a thorough an
 ## Generate Workload for Simulation(SimAI)
 ### Quick start
 AICB's script for generating Workload is: `./scripts/megatron_workload_with_aiob.sh`
-We provide four pre-existing models (7/13/22/175)B to quickly generate the corresponding Workload, which can be specified using the parameter `--model_size`.The computation part of the model can be selected to use aiob via--aiob_enableWhen not using aiob, the default fixed time is used to fill the Workload.When `--aiob_enable` is enabled, if `--comp_filepath` is not specified, the current GPU's computation time will be used to fill the Workload
+We provide four pre-existing models (7/13/22/175)B and DeepSeek (16/236/671)B to quickly generate the corresponding Workload, which can be specified using the parameter `--model_size`.The computation part of the model can be selected to use aiob via--aiob_enableWhen not using aiob, the default fixed time is used to fill the Workload.When `--aiob_enable` is enabled, if `--comp_filepath` is not specified, the current GPU's computation time will be used to fill the Workload
 Below is an example of generating a Workload with a model size of 7B, tp 4, pp 1, a total GPU count of 4096, gbs 8192, mbs 1, sequence length of 4096, with flash_attn, swiglu, and aiob enabled, and reading Example.txt as the computation time.
 ```bash
 sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
@@ -125,7 +125,7 @@ The main parameters for AICB are as follows:
 
 | Category                     | Parameter Name                   | Description                                                                 | 
 |------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
-| Name                         | frame                             | DeepSpeed/Megatron                                                          |
+| Name                         | frame                             | DeepSpeed/Megatron/DeepSeek                                                 |
 |                              | model_name                        | Llama/GPT/...                                                               |
 |Training Parameters           | world_size                        | Total number of GPUs                                                        |
 |                              | global_batch                      | Total batch size for training                                               |
@@ -157,6 +157,13 @@ The main parameters for AICB are as follows:
 | DeepSpeed parameters         | zero_stage,reduce_bucket_size     | choose zero optimizer stage                                                 |
 |                              | allgather_bucket_size             | Optimizes communication efficiency and memory usage during all-gather operations For stage 1/2 only                                                          |
 |                              | prefetch_bucket_size, param_persistence_threshold, model_persistence_threshold, max_live_parameters | For stage 3 only. Control the number of prefetch parameters. Control the size of all_gather and reduce_scatter |
+| DeepSeek parameters          | qk_rope_dim                       | RoPE dimention for QK                                                       |
+|                              | qk_nope_dim                       | non-RoPE (aka NoPE) dimention for QK                                        |
+|                              | q_lora_rank                       | Q down projection (aka compression, LoRA) dimention for Multi-Head Latent Attention (MLA) |
+|                              | kv_lora_rank                      | KV down projection (aka compression, LoRA) dimention for MLA                |
+|                              | v_head_dim                        | V head dimention                                                            |
+|                              | n_shared_expert                   | Number of shared experts per MoE layer                                      |
+|                              | n_dense_layer                     | Number of transformer blocks with dense MLP instead of MoE                  |
 | Other                        | aiob_enable                       | Enable AIOB to obtain computation time                                      |
 |                              | comp_filepath                     | Use aiob_lib to get operation compute time                                  |
 
@@ -198,6 +205,20 @@ torchrun \
 ./aicb.py --frame=Megatron --world_size=$((WORLD_SIZE*8)) --tensor_model_parallel_size=$tensor_model_parallel_size --expert_model_parallel_size=$expert_model_parallel_size \
 --moe_enable=$moe_enable --num_experts=$num_experts --moe_router_topk=$moe_router_topk --moe_grouped_gemm=$moe_grouped_gemm \
   --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size/tensor_model_parallel_size)) --epoch_num=$epoch_num --swiglu \
+  --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
+  $sp_enable --seq_len=$seq_len --vocab_size=$vocab_size --aiob_enable=$enable 
+
+# DeepSeek Example
+torchrun \
+--nnodes $WORLD_SIZE \
+--node_rank $RANK \
+--nproc_per_node gpu \
+--master_addr $MASTER_ADDR \
+--master_port $MASTER_PORT \
+./aicb.py \
+  --frame=DeepSeek --world_size=$((WORLD_SIZE*8)) --tensor_model_parallel_size=$tensor_model_parallel_size --expert_model_parallel_size=$expert_model_parallel_size \
+  --moe_enable=$moe_enable --num_experts=$num_experts --moe_router_topk=$moe_router_topk \
+  --micro_batch=$batch_size --global_batch=$((WORLD_SIZE*8*batch_size/tensor_model_parallel_size)) \ --epoch_num=$epoch_num --swiglu \
   --num_layers=$num_layers --hidden_size=$hidden_size --ffn_hidden_size=$ffn_hidden_size --num_attention_heads=$num_attention_heads \
   $sp_enable --seq_len=$seq_len --vocab_size=$vocab_size --aiob_enable=$enable 
 ```
