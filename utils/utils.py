@@ -790,3 +790,18 @@ def divide(numerator, denominator):
     the division value."""
     ensure_divisibility(numerator, denominator)
     return numerator // denominator
+
+def num_parameters_to_bytes(args, params: int) -> str:
+    """convert parameters to MBs or GBs"""
+    bytes_per_param = 1
+    if args.dtype == "bfloat16" or args.dtype == "float16":
+        bytes_per_param = 2
+    else:
+        # default to float32, similart to AiobMegatron
+        bytes_per_param = 4
+    b = params * bytes_per_param
+    gb = b / 1e9
+    # if less than 1GB, print MB
+    if gb < 0:
+        return f"{b/1e6:.2f} MB"
+    return f"{gb:.2f} GB"
