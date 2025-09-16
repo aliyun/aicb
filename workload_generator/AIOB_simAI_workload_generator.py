@@ -429,104 +429,62 @@ class SIMAI_workload:
                             backward_compute_time = _get_aiob_compute_time(
                                 self.compute_cache, "backward", name.split("_")[0]
                             )
-                        if args.tensor_model_parallel_size == 1 :
-                            forward_comm1 = "NONE"
+                        
+                        # MoE Communication is based on Megatron core_v0.13.0:https://github.com/NVIDIA/Megatron-LM/blob/core_v0.13.0
+                        forward_comm1 = "ALLGATHER" # for EP
+                        forward_comm2 = "ALLTOALL_EP"
+                        forward_comm3 = "ALLGATHER"
+                        forward_comm4 = "REDUCESCATTER"
+                        forward_comm5 = "ALLTOALL_EP"
+                        if args.expert_model_parallel_size == 1:
                             forward_comm2 = "NONE"
-                            forward_comm3 = "ALLTOALL_EP"
-                            forward_comm4 = "NONE"
                             forward_comm5 = "NONE"
-                            forward_comm6 = "ALLTOALL_EP"
-                            forward_comm7 = "NONE"
-                        else:
-                            forward_comm1 = "ALLGATHER"
-                            forward_comm2 = "ALLTOALL"
-                            forward_comm3 = "ALLTOALL_EP"
-                            forward_comm4 = "ALLGATHER"
-                            forward_comm5 = "REDUCESCATTER"
-                            forward_comm6 = "ALLTOALL_EP"
-                            forward_comm7 = "ALLTOALL"
-                        if args.expert_model_parallel_size != 1:
-                            fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
-                            bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
-                            ep_combine_size = tp_comm_size * self.topk // self.tp
+                        if args.tensor_model_parallel_size == 1:
+                            if args.expert_model_parallel_size == 1:
+                                forward_comm1 = "NONE"
+                            forward_comm3 = "NONE"
+                            forward_comm4 = "NONE"
 
-                            if self.args.frame == "DeepSeek":
-                                # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
-                                # only fprop does the FP8
-                                fwd_ep_dispatch_size *= MockedDeepSeek.FP8_FACTOR
-                                # rest of the comm shapes are similar to megatron
+                        # if args.expert_model_parallel_size != 1:
+                        ep_allgather_size = self.expert_model_parallel_size * self.num_experts * self.tp
+                        fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                        bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                        ep_combine_size = tp_comm_size * self.topk // self.tp
 
-                            self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
-                                        forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,
-                                        backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=2*self.mbs*self.seq_len*self.num_experts,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm2, forward_comm_size= tp_comm_size//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm2, backward_comm_size=tp_comm_size//self.tp,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm3, forward_comm_size= fwd_ep_dispatch_size,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size= bkwd_ep_dispatch_size,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm4, forward_comm_size= tp_comm_size*self.topk,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm5, backward_comm_size=tp_comm_size*self.topk,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm5, forward_comm_size= tp_comm_size*self.topk,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm6, forward_comm_size= ep_combine_size,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=ep_combine_size,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm7, forward_comm_size= tp_comm_size//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm7, backward_comm_size=tp_comm_size//self.tp,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                        else:
-                            self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
-                                        forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,
-                                        backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=2*self.mbs*self.seq_len*self.num_experts,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm2, forward_comm_size= tp_comm_size//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm2, backward_comm_size=tp_comm_size//self.tp,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm3, forward_comm_size=1,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size=1,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm4, forward_comm_size= tp_comm_size*self.topk,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm5, forward_comm_size= tp_comm_size*self.topk,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm6, forward_comm_size=1,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=1,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
-                            self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm7, forward_comm_size= tp_comm_size//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm7, backward_comm_size=tp_comm_size//self.tp,
-                                        dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
-                                        ))
+                        if self.args.frame == "DeepSeek":
+                            # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
+                            # only fprop does the FP8
+                            fwd_ep_dispatch_size = int(fwd_ep_dispatch_size * MockedDeepSeek.FP8_FACTOR)
+                            # rest of the comm shapes are similar to megatron
+                        # EP All gather
+                        self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
+                                    forward_comm = forward_comm1, forward_comm_size=ep_allgather_size,
+                                    backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=ep_allgather_size,
+                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                    ))
+                        # EP dispatch
+                        self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                    forward_comm = forward_comm2, forward_comm_size=fwd_ep_dispatch_size,
+                                    backward_compute_time=default_compute_time, backward_comm=forward_comm2, backward_comm_size=bkwd_ep_dispatch_size,
+                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                    ))
+                        # TP All reduce
+                        self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                    forward_comm = forward_comm3, forward_comm_size=tp_comm_size*self.topk,
+                                    backward_compute_time=default_compute_time, backward_comm=forward_comm4, backward_comm_size=tp_comm_size*self.topk,
+                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                    ))
+                        self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                    forward_comm = forward_comm4, forward_comm_size=tp_comm_size*self.topk,
+                                    backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size=tp_comm_size*self.topk,
+                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                    ))
+                        # EP combine
+                        self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
+                                    forward_comm = forward_comm5, forward_comm_size=ep_combine_size,
+                                    backward_compute_time=default_compute_time, backward_comm=forward_comm5, backward_comm_size=ep_combine_size,
+                                    dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
+                                    ))
                 else:
                     if args.tensor_model_parallel_size == 1 :
                         forward_comm = "NONE"
