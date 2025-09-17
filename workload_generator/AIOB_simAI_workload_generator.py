@@ -446,7 +446,7 @@ class SIMAI_workload:
                             forward_comm4 = "NONE"
 
                         # if args.expert_model_parallel_size != 1:
-                        ep_allgather_size = self.expert_model_parallel_size * self.num_experts * self.tp
+                        ep_allgather_size = 2 * self.expert_model_parallel_size * self.num_experts * self.tp
                         fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
                         bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
                         ep_combine_size = tp_comm_size * self.topk // self.tp
@@ -459,7 +459,7 @@ class SIMAI_workload:
                         # EP All gather
                         self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
                                     forward_comm = forward_comm1, forward_comm_size=ep_allgather_size,
-                                    backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=ep_allgather_size,
+                                    backward_compute_time=backward_compute_time, backward_comm="NONE", backward_comm_size=0,
                                     dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                     ))
                         # EP dispatch
