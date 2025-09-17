@@ -406,6 +406,7 @@ class MOEMLP(MockedModel):
         self.weight1 = MockedParam((hidden_size, fc1_output_size_per_parttition))
         self.weight2 = MockedParam((fc2_input_size_per_parttition, hidden_size))
         self.tp_size = tp
+        self.ep_size = expert_model_parallel_size
         self.topk = topk
         self.seq_len = seq_len
         self.num_experts = num_experts
@@ -414,32 +415,18 @@ class MOEMLP(MockedModel):
 
     def permutation(self, stage):
         workloads = Workload()
-        if self.tp_size > 1:
+        if self.ep_size > 1:
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_to_all,
-                    comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_size,
-                    msg_size=self.seq_len
-                    * self.hidden_size
-                    * self.batch_size
-                    // self.tp_size
+                    comm_group=CommGroup.ep_group,
+                    msg_size=(
+                        self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
+                    )
                     * 2,
-                    stage=f"{stage}.MoE",
+                    stage=f"{stage}.MoE.dispatch",
                 )
             )
-        workloads.append(
-            LogItem(
-                comm_type=CommType.all_to_all,
-                comm_group=CommGroup.ep_group,
-                msg_size=self.seq_len
-                * self.hidden_size
-                * self.batch_size
-                // self.tp_size
-                * 2,
-                stage=f"{stage}.MoE",
-            )
-        )
         if self.tp_size > 1:
             # TODO:we assume tokens consistent split to all experts, but actually its not
             workloads.append(
@@ -471,28 +458,17 @@ class MOEMLP(MockedModel):
                     stage=f"{stage}.MoE.unpermutation",
                 )
             )
-        workloads.append(
-            LogItem(
-                comm_type=CommType.all_to_all,
-                comm_group=CommGroup.ep_group,
-                msg_size=self.seq_len
-                * self.hidden_size
-                * self.batch_size
-                * self.topk
-                // self.tp_size
-                * 2,
-                stage=f"{stage}.MoE",
-            )
-        )
 
-        if self.tp_size > 1:
-            # TODO:we assume tokens consistent split to all experts, but actually its not
+        if self.ep_size > 1:
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_to_all,
-                    comm_group=CommGroup.tp_group,
-                    msg_size=2 * self.hidden_size * self.seq_len * self.batch_size // self.tp_size,
-                    stage=f"{stage}.MoE",
+                    comm_group=CommGroup.ep_group,
+                    msg_size=(
+                        self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
+                    )
+                    * 2,
+                    stage=f"{stage}.MoE.combine",
                 )
             )
 
@@ -500,12 +476,13 @@ class MOEMLP(MockedModel):
 
     def forward(self):
         workloads = Workload()
-        workloads.append(LogItem(
-                    comm_type=CommType.all_gather,
-                    comm_group=CommGroup.tp_group,
-                    msg_size=2 * self.hidden_size * self.batch_size * self.seq_len,
-                    stage=f"forward.MoE.preprocess",
-                ))
+        if self.tp_size > 1 or self.ep_size > 1:
+            workloads.append(LogItem(
+                        comm_type=CommType.all_gather,
+                        comm_group=CommGroup.ep_group,
+                        msg_size=2 * self.ep_size * self.num_experts * self.tp_size,
+                        stage=f"forward.MoE.preprocess",
+                    ))
         workloads.extend(self.permutation(stage="forward"))
         workloads.extend(self.unpermutation(stage="forward"))
         assert all([isinstance(workload, LogItem) for workload in workloads.workload])

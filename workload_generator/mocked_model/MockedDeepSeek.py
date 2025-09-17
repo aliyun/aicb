@@ -283,41 +283,26 @@ class DeepSeekMoE(MockedModel):
 
     def permutation(self, stage):
         workloads = Workload()
-        if self.tp_size > 1:
+        if self.expert_model_parallel_size > 1:
+            # only for FWD
+            # FP8 dispatch, include input/128 matrix for scale
+            # based on DeepEP https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
+            if stage == "forward":
+                scaled = FP8_FACTOR
+            else:
+                scaled = 1
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_to_all,
-                    comm_group=CommGroup.tp_group,
-                    comm_group_size=self.tp_size,
+                    comm_group=CommGroup.ep_group,
                     msg_size=(
-                        self.seq_len
-                        * self.hidden_size
-                        * self.batch_size
-                        // self.tp_size
+                        self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
                     )
-                    * 2,
-                    stage=f"{stage}.MoE",
+                    * 2
+                    * scaled,
+                    stage=f"{stage}.MoE.dispatch",
                 )
             )
-        # only for FWD
-        # FP8 dispatch, include input/128 matrix for scale
-        # based on DeepEP https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
-        if stage == "forward":
-            scaled = FP8_FACTOR
-        else:
-            scaled = 1
-        workloads.append(
-            LogItem(
-                comm_type=CommType.all_to_all,
-                comm_group=CommGroup.ep_group,
-                msg_size=(
-                    self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
-                )
-                * 2
-                * scaled,
-                stage=f"{stage}.MoE",
-            )
-        )
         if self.tp_size > 1:
             workloads.append(
                 LogItem(
@@ -349,32 +334,18 @@ class DeepSeekMoE(MockedModel):
                     stage=f"{stage}.MoE.unpermutation",
                 )
             )
-        # bf16 all-to-all combine
-        workloads.append(
-            LogItem(
-                comm_type=CommType.all_to_all,
-                comm_group=CommGroup.ep_group,
-                msg_size=self.seq_len
-                * self.hidden_size
-                * self.batch_size
-                * self.topk
-                // self.tp_size
-                * 2,
-                stage=f"{stage}.MoE",
-            )
-        )
 
-        if self.tp_size > 1:
+        if self.expert_model_parallel_size > 1:
+            # bf16 all-to-all combine
             workloads.append(
                 LogItem(
                     comm_type=CommType.all_to_all,
-                    comm_group=CommGroup.tp_group,
-                    msg_size=2
-                    * self.hidden_size
-                    * self.seq_len
-                    * self.batch_size
-                    // self.tp_size,
-                    stage=f"{stage}.MoE",
+                    comm_group=CommGroup.ep_group,
+                    msg_size=(
+                        self.seq_len * self.hidden_size * self.batch_size * self.topk // self.tp_size
+                    )
+                    * 2,
+                    stage=f"{stage}.MoE.combine",
                 )
             )
 
