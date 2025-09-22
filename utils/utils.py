@@ -137,14 +137,16 @@ def generate_masked_orthogonal_rank_groups(
             )
         ranks.append(rank)
     return ranks
+
 class RankGenerator(object):
-    def __init__(self, tp: int, ep: int, dp: int, pp: int, cp: int, order: str) -> None:
+    def __init__(self, tp: int, ep: int, dp: int, pp: int, cp: int, order: str, rank_offset: int = 0) -> None:
         self.tp = tp
         self.ep = ep
         self.dp = dp
         self.pp = pp
         self.cp = cp
-        self.world_size = tp * dp * pp * cp
+        self.rank_offset = rank_offset
+        self.world_size = tp * dp * pp * cp * ep
 
         self.name_to_size = {
             "tp": self.tp,
@@ -163,59 +165,49 @@ class RankGenerator(object):
         for name in self.name_to_size.keys():
             if name not in order and self.name_to_size[name] != 1:
                 raise RuntimeError(
-                    f"The size of ({name}) is ({self.name_to_size[name]}), but you haven't specified the order ({self.order})."
+                    f"The size of ({name}) is ({self.name_to_size[name]}), but you haven't"
+                    f"specified the order ({self.order})."
                 )
             elif name not in order:
                 order = order + '-' + name
 
-        self.order_w_ep = order
-        self.order_wo_ep = '-'.join([token for token in order.split('-') if token != 'ep'])
-        self.ordered_size_wo_ep = []
-        self.ordered_size_w_ep = []
+        self.order = order
+        self.ordered_size = []
 
         for token in order.split('-'):
-            if token == 'dp':
-                self.ordered_size_w_ep.append(self.dp // self.ep)
-                self.ordered_size_wo_ep.append(self.dp)
-            elif token == 'ep':
-                self.ordered_size_w_ep.append(self.ep)
-            else:
-                self.ordered_size_w_ep.append(self.name_to_size[token])
-                self.ordered_size_wo_ep.append(self.name_to_size[token])
+            self.ordered_size.append(self.name_to_size[token])
 
     def get_mask(self, order: str, token: str):
+        """Create a mask for the specified tokens based on the given order.
+
+        Args:
+            order (str): The order of parallelism types (e.g., 'tp-dp-pp').
+            token (str): The specific parallelism types to include in the mask,
+                         separated by hyphens (e.g., 'tp-dp').
+        """
         ordered_token = order.split('-')
-        token = token.split('-')
+        token_list = token.split('-')
         mask = [False] * len(ordered_token)
-        for t in token:
+        for t in token_list:
             mask[ordered_token.index(t)] = True
         return mask
 
-    def get_ranks(self, token, independent_ep=False):
-        '''Get rank group by input token.
+    def get_ranks(self, token):
+        """Get rank group by input token.
 
-        Arguments:
+        Args:
             token (str):
                 Specify the ranks type that want to get. If we want
                 to obtain multiple parallel types, we can use a hyphen
                 '-' to separate them. For example, if we want to obtain
                 the TP_DP group, the token should be 'tp-dp'.
-
-            independent_ep (bool: True):
-                This flag controls whether we treat EP and DP independently.
-                EP shares ranks with DP, if we want to get ranks related to
-                EP, we should set the flag. For example, get_ranks('dp', True)
-                will get DP modulo EP group, and get_ranks('dp', False) will
-                get full DP group.
-        '''
-        if independent_ep:
-            parallel_size = self.ordered_size_w_ep
-            order = self.order_w_ep
-        else:
-            parallel_size = self.ordered_size_wo_ep
-            order = self.order_wo_ep
-        mask = self.get_mask(order, token)
-        ranks = generate_masked_orthogonal_rank_groups(self.world_size, parallel_size, mask)
+        """
+        mask = self.get_mask(self.order, token)
+        ranks = generate_masked_orthogonal_rank_groups(self.world_size, self.ordered_size, mask)
+        if self.rank_offset > 0:
+            for rank_group in ranks:
+                for i in range(len(rank_group)):
+                    rank_group[i] += self.rank_offset
         return ranks
 
 def gelu_impl(x):
@@ -483,15 +475,20 @@ class CommType(str, Enum):
 
 class CommGroup(str, Enum):
     """Enum class for possible comm groups"""
-
     dp_group = "dp_group"
-    pp_group = "pp_group"
+    dp_cp_group = "dp_cp_group"
+    cp_group = "cp_group"
+    tp_pp_group = "tp_pp_group"
     tp_group = "tp_group"
+    pp_group = "pp_group"
+    tp_dp_cp_group = "tp_dp_cp_group"
+    tp_dp_group = "tp_dp_group"
+    tp_cp_group = "tp_cp_group"
     ep_group = "ep_group"
-    ep_dp_group = "ep_dp_group"
-    ep_tp_group = "ep_tp_group"
-    embedding_group = "embedding_group"
-    all = "all_nodes"
+    exp_tp_group = "exp_tp_group"
+    tp_ep_group = "tp_ep_group"
+    tp_ep_pp_group = "tp_ep_pp_group"
+    exp_dp_group = "exp_dp_group"
 
 
 class WorkloadWriter:
@@ -523,10 +520,15 @@ def get_params():
                         help="Number of GPUs")
     parser.add_argument("--tensor_model_parallel_size", type=int, default=1,
                         help='Degree of tensor model parallelism.')
-    parser.add_argument("--pipeline_model_parallel", type=int, default=1,
+    parser.add_argument("--pipeline_model_parallel_size", type=int, default=1,
                         help='Degree of pipeline model parallelism.')
+    parser.add_argument("--encoder_tensor_model_parallel_size", type=int, default=0,
+                        help='Degree of encoder tensor model parallelism.')
+    parser.add_argument("--encoder_pipeline_model_parallel_size", type=int, default=0,
+                        help='Degree of encoder pipeline model parallelism.')
     parser.add_argument('--context-parallel-size', type=int, default=1,
                        help='Degree of context parallelism.')
+
     parser.add_argument("--pp_rank", type=int, default=-1,
                         help='Rank where encoder and decoder should be split.')
     parser.add_argument("--global_batch", type=int, default=4,
@@ -569,16 +571,13 @@ def get_params():
     args = parser.parse_args()
 
     assert (
-        args.world_size % (args.tensor_model_parallel_size * args.pipeline_model_parallel) == 0
-    ), f"world size: {args.world_size}, tp: {args.tensor_model_parallel_size}, pp: {args.pipeline_model_parallel}"
+        args.world_size % (args.tensor_model_parallel_size * args.pipeline_model_parallel_size) == 0
+    ), f"world size: {args.world_size}, tp: {args.tensor_model_parallel_size}, pp: {args.pipeline_model_parallel_size}"
     if args.moe_enable:
         assert (
             args.moe_enable and args.enable_sequence_parallel
         ), f"moe must be enabled with sequence parallel"
-    args.dp_num = args.world_size // (args.tensor_model_parallel_size * args.pipeline_model_parallel)
-    # assert args.global_batch % (args.dp_num * args.micro_batch) == 0, \
-    #     f"global_batch: {args.global_batch}, dp: {args.dp_num}, micro_batch: {args.micro_batch}"
-    args.num_microbatches = args.global_batch // (args.dp_num * args.micro_batch)
+
     if args.aiob_enable and not args.computation_enable:
             args.computation_enable = True
             
@@ -610,8 +609,43 @@ def get_params():
             "Expert parallelism is not supported with fp16 training."
     if args.moe_grouped_gemm:
         assert args.dtype == "bfloat16", 'Currently GroupedGEMM for MoE only supports bf16 dtype.'
-    if args.pipeline_model_parallel > 1 :
-        args.num_layers = int(args.num_layers//args.pipeline_model_parallel)
+    if args.pipeline_model_parallel_size > 1 :
+        args.num_layers = int(args.num_layers // args.pipeline_model_parallel_size)
+
+    if args.encoder_pipeline_model_parallel_size == 0 and args.num_experts == 0:
+        assert args.encoder_tensor_model_parallel_size == args.tensor_model_parallel_size,  "If non-MOE encoder shares first decoder pipeline rank it must have the same TP as the decoder."
+
+    if args.encoder_tensor_model_parallel_size > 0:
+        assert args.num_attention_heads % args.encoder_tensor_model_parallel_size == 0
+        assert args.encoder_tensor_model_parallel_size <= args.tensor_model_parallel_size, "We do not support encoders with more TP than the decoder."
+
+    if args.encoder_pipeline_model_parallel_size > 0 and args.encoder_tensor_model_parallel_size == 0:
+        args.encoder_tensor_model_parallel_size = args.tensor_model_parallel_size
+
+    encoder_model_size = args.encoder_tensor_model_parallel_size * args.encoder_pipeline_model_parallel_size * args.context_parallel_size
+    decoder_model_size = args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
+    total_model_size = encoder_model_size + decoder_model_size
+
+    # Total model size.
+    assert args.world_size % total_model_size == 0, (
+        f"world size ({args.world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})"
+    )
+
+    args.data_parallel_size = args.world_size // total_model_size
+    
+    # assert args.global_batch % (args.data_parallel_size * args.micro_batch) == 0, \
+    #     f"global_batch: {args.global_batch}, dp: {args.data_parallel_size}, micro_batch: {args.micro_batch}"
+    args.num_microbatches = args.global_batch // (args.data_parallel_size * args.micro_batch)
+
+    if args.expert_tensor_parallel_size is None:
+        args.expert_tensor_parallel_size = args.tensor_model_parallel_size
+
+
+    if args.seq_length is not None and args.context_parallel_size > 1:
+        assert args.seq_length % (args.context_parallel_size * 2) == 0, \
+            'seq-length should be a multiple of 2 * context-parallel-size ' \
+            'if context-parallel-size > 1.'
+        
     return args
 
 
@@ -726,6 +760,8 @@ def get_simAI_workload_params(parser: argparse.ArgumentParser):
 def get_moe_params(parser: argparse.ArgumentParser):
     parser.add_argument('--moe_enable', action="store_true")
     parser.add_argument('--expert_model_parallel_size', type=int, default=1, help='Degree of expert model parallelism.')
+    parser.add_argument('--expert-tensor-parallel-size', type=int, default=None,
+                       help='Degree of expert model parallelism. Default is None, which will be set to the value of --tensor-model-paralle-size.')
     parser.add_argument('--num_experts', type=int, default=1, help='Number of Experts in MoE (None means no MoE)')
     parser.add_argument('--moe_router_topk', type=int, default=1, help='Number of experts to route to for each token. The default is 2.')
     parser.add_argument('--moe_grouped_gemm', action='store_true',

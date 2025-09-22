@@ -30,7 +30,7 @@ class Collective_Test(WorkloadGenerator):
                 LogItem(
                     comm_type=CommType.get_comm_type(self.args.test_comm),
                     comm_group=CommGroup.dp_group,
-                    comm_group_size=self.args.dp_num,
+                    comm_group_size=self.args.data_parallel_size,
                     msg_size=self.args.begin_size,
                     stage="warmup",
                 )
@@ -52,7 +52,7 @@ class Collective_Test(WorkloadGenerator):
                         LogItem(
                             comm_type=test_comm,
                             comm_group=CommGroup.dp_group,
-                            comm_group_size=self.args.dp_num,
+                            comm_group_size=self.args.data_parallel_size,
                             msg_size=curr_size,
                             stage="test_step",
                         )

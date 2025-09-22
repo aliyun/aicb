@@ -14,7 +14,8 @@ seq_length=2048
 micro_batch=1
 epoch_num=1
 tensor_model_parallel_size=8
-pipeline_model_parallel=1
+pipeline_model_parallel_size=1
+context_parallel_size=1
 vocab_size=50257
 model_name=gpt_13b
 ga_num=2
@@ -32,7 +33,8 @@ usage() {
       --frame              Communication framework: $frame
       --world_size              World size (number of nodes): $WORLD_SIZE
       --tensor_model_parallel_size                  Tensor parallelism size: $tensor_model_parallel_size
-      --pipeline_model_parallel                  Pipeline parallelism size: $pipeline_model_parallel
+      --pipeline_model_parallel_size                  Pipeline parallelism size: $pipeline_model_parallel_size
+      --context_parallel_size                  Context parallelism size: $context_parallel_size
       --global_batch            Global batch size: $global_batch
       --micro_batch             Micro batch size: $micro_batch
       --num_layers              Number of layers: $num_layers
@@ -72,8 +74,10 @@ echo "Processing argument: $1"
       world_size=$2; shift;;
     --tensor_model_parallel_size|tp_num)
       tensor_model_parallel_size=$2; shift;;
-    --pipeline_model_parallel|pp_num)
-      pipeline_model_parallel=$2; shift;;
+    --pipeline_model_parallel_size|pp_num)
+      pipeline_model_parallel_size=$2; shift;;
+    --context_parallel_size|cp_num)
+      context_parallel_size=$2; shift;;
     --global_batch)
       global_batch=$2; shift;;
     --micro_batch)
@@ -169,7 +173,7 @@ case $model_size in
     ffn_hidden_size=53248
     num_attention_heads=128
     tensor_model_parallel_size=8
-    pipeline_model_parallel=16
+    pipeline_model_parallel_size=16
     ;;
   65)
     model_name=llama_65B
@@ -178,7 +182,7 @@ case $model_size in
     ffn_hidden_size=28672
     num_attention_heads=64
     tensor_model_parallel_size=8
-    pipeline_model_parallel=2
+    pipeline_model_parallel_size=2
     ;;
   moe)
     model_name=Mixtral_8*7B
@@ -260,8 +264,8 @@ case $model_size in
     ;;
 esac
 
-dp_num=$((world_size/tensor_model_parallel_size/pipeline_model_parallel))
-global_batch=$((ga_num*dp_num*micro_batch))
+data_parallel_size=$((world_size/tensor_model_parallel_size/pipeline_model_parallel_size))
+global_batch=$((ga_num*data_parallel_size*micro_batch))
 if [ $workload_only ]; then
   script="python -m workload_generator.generate_megatron_workload" 
 else
@@ -271,7 +275,7 @@ fi
 cmd="$script \
   --frame=$frame \
   --model_name=$model_name \
-  --world_size=$(($WORLD_SIZE * $NUM_GPUS)) \
+  --world_size=$world_size \
   --tensor_model_parallel_size=$tensor_model_parallel_size \
   --micro_batch=$micro_batch \
   --global_batch=$global_batch \
@@ -281,7 +285,8 @@ cmd="$script \
   --num_attention_heads=$num_attention_heads \
   --seq_length=$seq_length \
   --vocab_size=$vocab_size \
-  --pipeline_model_parallel=$pipeline_model_parallel \
+  --pipeline_model_parallel_size=$pipeline_model_parallel_size \
+  --context-parallel-size=$context_parallel_size \
   --use-distributed-optimizer \
   --max_position_embeddings=$max_position_embeddings \
   ${aiob_enable} \

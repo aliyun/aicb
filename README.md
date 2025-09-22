@@ -142,7 +142,7 @@ For the `Megatron parallel framework`, you can quickly start using the scripts/m
 ```bash
 sh scripts/megatron_gpt.sh \
 --nnodes 1 --node_rank 0 --nproc_per_node 8 --master_addr localhost --master_port 29500 \
--m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 \
+-m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 16  \
 --micro_batch 1 --seq_length 2048 --swiglu --use_flash_attn --aiob_enable
 ```
@@ -152,7 +152,7 @@ For `Moe` , you can quickly start it using the [scripts/megatron_gpt.sh](scripts
 ```bash
 sh scripts/megatron_gpt.sh \
 --nnodes 1 --node_rank 0 --nproc_per_node 8 --master_addr localhost --master_port 29500 \
--m moe --world_size 8 --tensor_model_parallel_size 4 --pipeline_model_parallel 1 \
+-m moe --world_size 8 --tensor_model_parallel_size 4 --pipeline_model_parallel_size 1 \
 --moe_enable --expert_model_parallel_size 1  \
 --frame Megatron --global_batch 16  \
 --num_experts 4 --moe_router_topk 2 \
@@ -198,7 +198,7 @@ Note that the computation times are obtained through the execution of computatio
 The following commands does not generate the computation descrition file, but also run the workload in the real GPU cluster.
 ```bash
 sh scripts/megatron_gpt.sh \
--m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 \
+-m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 16  \
 --micro_batch 1 --seq_length 2048 \
 --swiglu --use_flash_attn  --aiob_enable 
@@ -208,7 +208,7 @@ Users can defined their own computation times or directly use the files we provi
 By specifying the computation description file with the `--comp_filepath` option, you can embed computation times before running the workload on a physical machine.
 ```bash
 sh scripts/megatron_gpt.sh \
--m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 \
+-m 7 --world_size 8 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 16  --micro_batch 1 \
 --seq_length 2048 --swiglu --use_flash_attn  \
 --aiob_enable  \
@@ -228,7 +228,7 @@ Here, you can use the script [scripts/megatron_workload.sh](scripts/megatron_wor
 ```bash
 sh ./scripts/megatron_workload_with_aiob.sh \
 -m 7 --world_size 4096 \
---tensor_model_parallel_size 2 --pipeline_model_parallel 1 \
+--tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 8192 \
 --micro_batch 1 --seq_length 4096 \
 --swiglu --use_flash_attn  --aiob_enable
@@ -237,7 +237,7 @@ sh ./scripts/megatron_workload_with_aiob.sh \
 
 ```bash
 sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
---world_size 4096 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 \
+--world_size 4096 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 \
 --frame Megatron --global_batch 8192 \
 --micro_batch 1 --seq_length 4096 --swiglu \
 --use_flash_attn  --aiob_enable \
@@ -247,7 +247,7 @@ sh ./scripts/megatron_workload_with_aiob.sh -m 7 \
 For the Moe, you can also use [scripts/megatron_workload_with_aiob.sh](scripts/workload_megatron.sh) to generate the corresponding model's workload file. 
 ```bash
 sh scripts/megatron_workload_with_aiob.sh \
--m moe --world_size 512 --tensor_model_parallel_size 2 --pipeline_model_parallel 1 --sp  --ep 16 \
+-m moe --world_size 512 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 1 --sp  --ep 16 \
 --num_experts 64 --moe_router_topk 2 --moe_grouped_gemm --moe_enable  \
 --frame Megatron --global_batch 1024  \
 --micro_batch 1 --seq_length 4096 --swiglu \

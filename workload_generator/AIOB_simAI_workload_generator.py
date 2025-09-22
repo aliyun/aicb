@@ -157,7 +157,7 @@ class SIMAI_workload:
 
     def workload_generate_aiob(self):
         # args.world_size --> total gpus number
-        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
+        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.data_parallel_size)
         if self.ga_num < 1:
             print(
                 "[WARN]: ga num < 1, please confirm global_batch num and micro_batch num"
@@ -256,7 +256,7 @@ class SIMAI_workload:
                 dp_comm_size=0,
             )
         )
-        if self.args.expert_model_parallel_size != self.args.dp_num:
+        if self.args.expert_model_parallel_size != self.args.data_parallel_size:
             self.workload.append(Work_Item(name="moe_grad_norm1", forward_compute_time=default_compute_time,
                                     forward_comm = "NONE", forward_comm_size= 0,
                                     backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
@@ -620,7 +620,7 @@ class SIMAI_workload:
 
     def workload_generate(self):
         # args.world_size --> total gpus number
-        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.dp_num)
+        self.ga_num = self.args.global_batch // (self.args.micro_batch * self.args.data_parallel_size)
         if self.ga_num < 1:
             print(
                 "[WARN]: ga num < 1, please confirm global_batch num and micro_batch num"
@@ -669,7 +669,7 @@ class SIMAI_workload:
                     dp_comm_size=0,
                 )
             )
-        if args.expert_model_parallel_size != args.dp_num:
+        if args.expert_model_parallel_size != args.data_parallel_size:
             self.workload.append(Work_Item(name="moe_grad_norm1", forward_compute_time=default_compute_time,
                                     forward_comm = "NONE", forward_comm_size= 0,
                                     backward_compute_time=default_compute_time, backward_comm="NONE", backward_comm_size=0,
@@ -886,14 +886,14 @@ class SIMAI_workload:
 
         pp_comm = (
             f"pp_comm: {pp_comm_value}"
-            if self.args.pipeline_model_parallel != 1
+            if self.args.pipeline_model_parallel_size != 1
             else "pp_comm: 0"
         )
         with open(filename, "w") as f:
             f.write((
                 f"HYBRID_TRANSFORMER_FWD_IN_BCKWD model_parallel_NPU_group: {self.args.tensor_model_parallel_size} "
                 f"ep: {self.args.expert_model_parallel_size} "
-                f"pp: {self.args.pipeline_model_parallel} "
+                f"pp: {self.args.pipeline_model_parallel_size} "
                 f"vpp: {self.args.num_layers} "
                 f"ga: {self.ga_num} all_gpus: {self.args.world_size} "
                 f"checkpoints: 0 checkpoint_initiates: 0 "
@@ -959,7 +959,7 @@ class simAI_MicroTest:
             else:
                 f.write(
                     f"HYBRID_TRANSFORMER_FWD_IN_BCKWD	model_parallel_NPU_group: {self.args.tensor_model_parallel_size} \
-                        expert_parallel_npu_group: {self.args.expert_model_parallel_size} pp: {self.args.pipeline_model_parallel} \
+                        expert_parallel_npu_group: {self.args.expert_model_parallel_size} pp: {self.args.pipeline_model_parallel_size} \
                         ga: {self.ga_num} all_gpus: {self.args.world_size} checkpoints: 0 checkpoint_initiates: 0"
                     + "\n"
                 )
@@ -981,7 +981,7 @@ if __name__ == "__main__":
     result_dir = "results/workload/"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.gpu_type}-{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-MOE-{args.moe_enable}-GEMM-{args.moe_grouped_gemm}-flash_attn-{args.use_flash_attn}"
+    filename = f"{args.gpu_type}-{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel_size}-ep{args.expert_model_parallel_size}-gbs{args.global_batch}-mbs{args.micro_batch}-seq{args.seq_length}-MOE-{args.moe_enable}-GEMM-{args.moe_grouped_gemm}-flash_attn-{args.use_flash_attn}"
     filepath = os.path.join(result_dir, filename)
     params = model.parameters()
     # work = SIMAI_workload(model, args, GPU_Tensor_core.A100, "gpt13B")
