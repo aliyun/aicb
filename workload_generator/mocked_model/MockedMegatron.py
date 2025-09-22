@@ -45,6 +45,10 @@ class MegatronRowLinear(MockedModel):
         self.computation_enable = computation_enable
         self.tensor_model_parallel_size, self.seq_len, self.batch_size = tp, seq_len, batch_size
         self.comm_size = 2 * seq_len * batch_size * output_size
+    
+    def activation_memory(self):
+        # ctx.save_for_backward(input, weight)
+        return self.seq_len * self.input_size
 
     def forward(self):
         workloads = Workload()
@@ -157,6 +161,10 @@ class MegatronColumnLinear(MockedModel):
         self.comm_size = 2 * seq_len * batch_size * input_size
         if self.tensor_model_parallel_size > 1 and self.sequence_parallel_enabled:
             self.seq_len *= self.tensor_model_parallel_size
+    
+    def activation_memory(self):
+        # ctx.save_for_backward(input, weight)
+        return self.seq_len * self.input_size
 
     def forward(self):
         workloads = Workload()

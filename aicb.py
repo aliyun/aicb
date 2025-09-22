@@ -14,6 +14,7 @@ import torch
 from utils.utils import get_args, get_comp_out, extract_averages, Comp_with_aiob
 from utils.benchmark_logger import bench_logger
 from workload_generator.mocked_model.MockedDeepspeed import DeepspeedForCausalLM
+from workload_generator.mocked_model.MockedDeepSeek import DeepSeekV3Model
 from workload_generator.mocked_model.MockedMegatron import MegatronModel
 from workload_generator.generate_deepspeed_stage1_2_workload import (
     DeepSpeedStage1,
@@ -45,11 +46,19 @@ if __name__ == "__main__":
             workload_generator = DeepSpeedStage3(args, model)
     elif args.frame == "collective_test":
         workload_generator = Collective_Test(args, None)
+    elif args.frame == "DeepSeek":
+        model = DeepSeekV3Model(args)
+        workload_generator = MegatronWorkload(args, model)
     workload = workload_generator()
-    if args.aiob_enable and args.frame == "Megatron":
+    if args.aiob_enable and (args.frame == "Megatron" or args.frame == "DeepSeek"):
         
         params = model.parameters()
         args.model_param = sum(p.numel() for p in params)
+        args.activation_memory = 0
+        for sub_module in model.child_modules():
+            if hasattr(sub_module, "activation_memory"):
+                args.activation_memory += sub_module.activation_memory()
+        print("model_param:", args.model_param)
         if args.comp_filepath == None:
             local_rank = torch.distributed.get_rank() % torch.cuda.device_count()
             if local_rank == 0:

@@ -38,6 +38,7 @@ except ImportError:
     except ImportError:
         flash_attn_unpadded_func = None
 
+from workload_generator.mocked_model.AiobDeepSeek import DeepSeekMoE, DeepSeekMLA
 
 class MegatronModel(torch.nn.Module):
     def __init__(self, args=None):
@@ -47,35 +48,24 @@ class MegatronModel(torch.nn.Module):
 
         self.Embedding = MegatronEmbedding(self.args)
         self.Layernorm = MegatronLayernorm(self.args)
-        if self.args.use_flash_attn:
-            self.Attention = MegatronFlashAtten(self.args)
-        else:
-            self.Attention = MegatronAtten(self.args)
+        if args.frame == "DeepSeek":
+            self.Attention = DeepSeekMLA(self.args)
+        if args.frame == "Megatron":
+            if self.args.use_flash_attn:
+                self.Attention = MegatronFlashAtten(self.args)
+            else:
+                self.Attention = MegatronAtten(self.args)
         if self.args.moe_enable:
-            self.Mlp = MoELayer(self.args)
+            if self.args.frame == "DeepSeek":
+                self.Mlp = DeepSeekMoE(self.args)
+            else:
+                self.Mlp = MoELayer(self.args)
         else:
             self.Mlp = MegatronMlp(self.args)
         self.logit = logit(self.args)
         self.grad_param = Grad_param(self.args)
 
     def forward(self, input):
-        # if self.args.warm_up:
-        #     for _ in range(10):
-
-        #         layernorm = self.Layernorm._apply()
-        #         atten_qkv = self.Attention._apply_attenqkv()
-        #         if self.args.use_flash_attn :
-        #             atten_core = self.Attention._apply_flash_atten()
-        #         else:
-        #             atten_core_qk = self.Attention._apply_QK()
-        #             atten_core_softmax = self.Attention._apply_Softmax()
-        #             atten_core_contex = self.Attention._apply_Contex()
-        #         atten_linear = self.Attention._apply_Linear()
-        #         layernorm2 = self.Layernorm._apply()
-        #         mlp_linear_1 = self.Mlp._apply_Linear1()
-        #         mlp_gelu = self.Mlp._apply_activation()
-        #         mlp_linear_2 = self.Mlp._apply_Linear2()
-
         for _ in range(self.args.epoch_num):
             # #Embedding
             Emb_output, Emb_time = self.Embedding(input)
@@ -87,43 +77,50 @@ class MegatronModel(torch.nn.Module):
                 self.time_list.setdefault("layernorm", []).append(
                     {"time_gpu": layernorm}
                 )
-                if self.args.use_flash_attn:
-                    atten_output, atten_qkv, atten_core, atten_linear = self.Attention(
-                        lay_out
-                    )
-                    self.time_list.setdefault("atten_qkv", []).append(
-                        {"time_gpu": atten_qkv}
-                    )
-                    self.time_list.setdefault("atten_flash", []).append(
-                        {"time_gpu": atten_core}
-                    )
-                    self.time_list.setdefault("atten_linear", []).append(
-                        {"time_gpu": atten_linear}
-                    )
-                else:
-                    (
-                        atten_output,
-                        atten_qkv,
-                        atten_core_qk,
-                        atten_core_softmax,
-                        atten_core_contex,
-                        atten_linear,
-                    ) = self.Attention(lay_out)
-                    self.time_list.setdefault("atten_qkv", []).append(
-                        {"time_gpu": atten_qkv}
-                    )
-                    self.time_list.setdefault("atten_core_qk", []).append(
-                        {"time_gpu": atten_core_qk}
-                    )
-                    self.time_list.setdefault("atten_core_softmax", []).append(
-                        {"time_gpu": atten_core_softmax}
-                    )
-                    self.time_list.setdefault("atten_core_contex", []).append(
-                        {"time_gpu": atten_core_contex}
-                    )
-                    self.time_list.setdefault("atten_linear", []).append(
-                        {"time_gpu": atten_linear}
-                    )
+                if self.args.frame == "DeepSeek":
+                    atten_output, time_map = self.Attention(lay_out)
+                    for k, v in time_map.items():
+                        self.time_list.setdefault(k, []).append(
+                            {"time_gpu": v}
+                        )
+                if self.args.frame == "Megatron":
+                    if self.args.use_flash_attn:
+                        atten_output, atten_qkv, atten_core, atten_linear = self.Attention(
+                            lay_out
+                        )
+                        self.time_list.setdefault("atten_qkv", []).append(
+                            {"time_gpu": atten_qkv}
+                        )
+                        self.time_list.setdefault("atten_flash", []).append(
+                            {"time_gpu": atten_core}
+                        )
+                        self.time_list.setdefault("atten_linear", []).append(
+                            {"time_gpu": atten_linear}
+                        )
+                    else:
+                        (
+                            atten_output,
+                            atten_qkv,
+                            atten_core_qk,
+                            atten_core_softmax,
+                            atten_core_contex,
+                            atten_linear,
+                        ) = self.Attention(lay_out)
+                        self.time_list.setdefault("atten_qkv", []).append(
+                            {"time_gpu": atten_qkv}
+                        )
+                        self.time_list.setdefault("atten_core_qk", []).append(
+                            {"time_gpu": atten_core_qk}
+                        )
+                        self.time_list.setdefault("atten_core_softmax", []).append(
+                            {"time_gpu": atten_core_softmax}
+                        )
+                        self.time_list.setdefault("atten_core_contex", []).append(
+                            {"time_gpu": atten_core_contex}
+                        )
+                        self.time_list.setdefault("atten_linear", []).append(
+                            {"time_gpu": atten_linear}
+                        )
                 # layernorm
                 lay2_out, layernorm2 = self.Layernorm(atten_output)
 
@@ -144,6 +141,7 @@ class MegatronModel(torch.nn.Module):
             self.time_list.setdefault("layernorm_post", []).append(
                 {"time_gpu": layernorm_post}
             )
+            print(f"lay_post__out.shape: {lay_post__out.shape}")
             logit_out, logit_time = self.logit(lay_post__out)
             self.time_list.setdefault("logit_time", []).append({"time_gpu": logit_time})
             _, param_time = self.grad_param._apply()
@@ -304,13 +302,6 @@ class MegatronEmbedding(torch.nn.Module):
 
     @cuda_timing_decorator
     def _apply(self, input):
-        # words_embeddings = F.embedding(self.masked_input,
-        #                                self.weight,
-        #                                 None, None,
-        #                                 2.0, False,
-        #                                 False)
-        # input_ = input
-
         if self.tp > 1:
             # Build the mask.
             input_mask = (input < 0) | (input >= math.ceil(self.vocab_size / self.tp))
@@ -343,7 +334,7 @@ class MegatronLayernorm(torch.nn.Module):
         super(MegatronLayernorm, self).__init__()
         self.tp = args.tensor_model_parallel_size
         self.enable_sequence_parallel = args.enable_sequence_parallel
-        hidden_size = args.hidden_size
+        self.hidden_size = args.hidden_size
         device = torch.cuda.current_device()
         if args.dtype == "bfloat16":
             self.dtype = torch.bfloat16
@@ -355,15 +346,21 @@ class MegatronLayernorm(torch.nn.Module):
         #                           micro_batch,
         #                           hidden_size,
         #                           device=device).to(dtype)
-        self.lay_weight = torch.rand(hidden_size, device=device).to(self.dtype)
-        self.bias = torch.zeros(hidden_size, device=device).to(self.dtype)
+        self.lay_weight = torch.rand(self.hidden_size, device=device).to(self.dtype)
+        self.bias = torch.zeros(self.hidden_size, device=device).to(self.dtype)
 
     @cuda_timing_decorator
-    def _apply(self, hidden_states):
+    def _apply_fused_layer_norm(self, hidden_states):
         output_lay = FastLayerNormFN.apply(
             hidden_states, self.lay_weight, self.bias, 1e-05
         )
+        return output_lay
 
+    @cuda_timing_decorator
+    def _apply_torch_layernorm(self, hidden_states):
+        output_lay = torch.nn.functional.layer_norm(
+            hidden_states, [self.hidden_size] , self.lay_weight, self.bias, 1e-05
+        )
         return output_lay
 
     def forward(self, hidden_states):
@@ -372,7 +369,19 @@ class MegatronLayernorm(torch.nn.Module):
             chunks = torch.chunk(hidden_states, self.tp, 0)
             hidden_states = chunks[0]
 
-        lay_out, lay_time = self._apply(hidden_states)
+        # in case of DeepSeek16B, for Hidden size 10944, FastLayerNormFN fails with
+        # FWD: Unsupported hidden_size or types: 10944BFloat16BFloat16BFloat16Float
+        # because https://github.com/NVIDIA/apex/blob/4bdecd06b3c4b2c0a8fb6603829a8f9f05a42b49/apex/contrib/csrc/layer_norm/ln_fwd_cuda_kernel.cu#L73-L227
+        # thus, use torch's layer_norm
+
+        # try Fused, if exception, use torch
+        try:
+            lay_out, lay_time = self._apply_fused_layer_norm(hidden_states)
+        except Exception as e:
+            print(f"FastLayerNormFN failed with error {e}, using torch.nn.functional.layer_norm")
+            lay_out, lay_time = self._apply_torch_layernorm(hidden_states)
+
+
         if self.enable_sequence_parallel:
             lay_out = lay_out.repeat((self.tp, 1, 1))
 

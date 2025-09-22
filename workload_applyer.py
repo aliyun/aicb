@@ -75,7 +75,7 @@ class WorkloadApplyer:
         )
         self.gemm_cache = {}
         self.computation_aiob = False
-        if args.aiob_enable and args.frame == "Megatron":
+        if args.aiob_enable and (args.frame == "Megatron" or args.frame == "DeepSeek"):
             self.computation_aiob = True
 
         self.skip_computation = False

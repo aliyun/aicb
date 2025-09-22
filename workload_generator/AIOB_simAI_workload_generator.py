@@ -11,8 +11,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from workload_generator.mocked_model import MockedDeepSeek
 import workload_generator.mocked_model.MockedDeepspeed
 from workload_generator.mocked_model.MockedMegatron import *
+from workload_generator.mocked_model.MockedDeepSeek import *
 from workload_generator.mocked_model.MockedModel import MockedParam, MockedModel
 from utils.utils import CommType, get_params, get_comp_out, extract_averages
 import os
@@ -50,8 +52,13 @@ class Work_Item:
 
 
 
-def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
+def _get_aiob_compute_time(compute_cache, forward_or_backward, stage, dowarn=True):
     compute_time_map = compute_cache
+
+    # if compute time with exact layer name exist, use it without prefix
+    if stage in compute_time_map.keys():
+        return compute_time_map[stage]
+
     if stage == "grad":
         prefix = stage + "_" + forward_or_backward
     elif stage == "embedding":
@@ -66,8 +73,9 @@ def _get_aiob_compute_time(compute_cache, forward_or_backward, stage):
 
             compute_time = compute_time_map.get(key)
             return compute_time
-
-    print("[warn] can't match any stage", stage)
+    # just so it doesn't spam warning when trying to get per-layer comp time
+    if dowarn:
+        print("[warn] can't match any stage", stage)
     return 1
 
 
@@ -107,11 +115,12 @@ class SIMAI_workload:
                     or isinstance(model, MegatronRowLinear)
                     or isinstance(model, MegatronEmbedding)
                     or isinstance(model, FusedLayernorm)
+                    or isinstance(model, DeepSeekLinear)
                 ):
                     params = model.parameters()
                     param_count = sum(p.numel() for p in params)
                     layers.append(LayerInfo(model.layer_id, model.name, param_count))
-                if isinstance(model, MOEMLP):
+                if isinstance(model, MOEMLP) or isinstance(model, DeepSeekMoE):
                     moe_params = model.parameters()
                     moe_param_count = sum(p.numel() for p in moe_params)
                     layers.append(LayerInfo(model.layer_id, model.name, moe_param_count))
@@ -121,6 +130,8 @@ class SIMAI_workload:
                     isinstance(model, MegatronAttention)
                     or isinstance(model, MegatronMlp)
                     or isinstance(model, MegatronEmbedding)
+                    or isinstance(model, DeepSeekMLA)
+                    or isinstance(model, DeepSeekMoE)
                 ):
                     params = model.parameters()
                     param_count = sum(p.numel() for p in params)
@@ -265,6 +276,16 @@ class SIMAI_workload:
                 backward_comm_size = 0
                 dp_comm = "NONE"
                 dp_comm_size = 0
+
+                # try get layer specific compute time
+                # e.g. from AiobDeepSeek.DeepSeekMLA's compute times
+                layer_comp_time = _get_aiob_compute_time(
+                    self.compute_cache, "", name, False
+                )
+                # _get_aiob_compute_time return 1 in case no compute time found
+                if layer_comp_time == 1:
+                    layer_comp_time = None
+
                 if self.args.enable_sequence_parallel:
                     if "embedding" in name:
                         if args.tensor_model_parallel_size == 1 :
@@ -290,14 +311,48 @@ class SIMAI_workload:
                                 dp_comm_size=dp_comm_size,
                             )
                         )
+                    if "attention_linear" in name:
+                        # for non-shareded linear in attention block
+
+                        # similar to row linear but without comms
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time=_get_aiob_compute_time(
+                                self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
+                        if self.args.recompute_activations:
+                            forward_compute_time *= 2
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=forward_compute_time,
+                                forward_comm="NONE",
+                                forward_comm_size=0,
+                                backward_compute_time=backward_compute_time,
+                                backward_comm="NONE",
+                                backward_comm_size=0,#sp overlap allgather
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
                     if "row" in name:
                         
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
 
                         if self.args.recompute_activations and 'attention' in name:
                             forward_compute_time *= 2
@@ -326,12 +381,16 @@ class SIMAI_workload:
                             )
 
                     elif "column" in name:
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
 
                         if self.args.recompute_activations and 'attention' in name:
                             forward_compute_time *= 2
@@ -360,12 +419,16 @@ class SIMAI_workload:
                                 )
                             )
                     elif "moelayer" in name:
-                        forward_compute_time = _get_aiob_compute_time(
-                        self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
                         if args.tensor_model_parallel_size == 1 :
                             forward_comm1 = "NONE"
                             forward_comm2 = "NONE"
@@ -383,6 +446,16 @@ class SIMAI_workload:
                             forward_comm6 = "ALLTOALL_EP"
                             forward_comm7 = "ALLTOALL"
                         if args.expert_model_parallel_size != 1:
+                            fwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                            bkwd_ep_dispatch_size = tp_comm_size * self.topk // self.tp
+                            ep_combine_size = tp_comm_size * self.topk // self.tp
+
+                            if self.args.frame == "DeepSeek":
+                                # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
+                                # only fprop does the FP8
+                                fwd_ep_dispatch_size *= MockedDeepSeek.FP8_FACTOR
+                                # rest of the comm shapes are similar to megatron
+
                             self.workload.append(Work_Item(name=name, forward_compute_time=forward_compute_time,
                                         forward_comm = forward_comm1, forward_comm_size= 2*self.mbs*self.seq_len*self.num_experts,
                                         backward_compute_time=backward_compute_time, backward_comm=forward_comm1, backward_comm_size=2*self.mbs*self.seq_len*self.num_experts,
@@ -394,8 +467,8 @@ class SIMAI_workload:
                                         dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                         ))
                             self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm3, forward_comm_size= tp_comm_size*self.topk//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size=tp_comm_size*self.topk//self.tp,
+                                        forward_comm = forward_comm3, forward_comm_size= fwd_ep_dispatch_size,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm3, backward_comm_size= bkwd_ep_dispatch_size,
                                         dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                         ))
                             self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
@@ -409,8 +482,8 @@ class SIMAI_workload:
                                         dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                         ))
                             self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
-                                        forward_comm = forward_comm6, forward_comm_size= tp_comm_size*self.topk//self.tp,
-                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=tp_comm_size*self.topk//self.tp,
+                                        forward_comm = forward_comm6, forward_comm_size= ep_combine_size,
+                                        backward_compute_time=default_compute_time, backward_comm=forward_comm6, backward_comm_size=ep_combine_size,
                                         dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                         ))
                             self.workload.append(Work_Item(name=name, forward_compute_time=default_compute_time,
@@ -483,12 +556,16 @@ class SIMAI_workload:
                             )
                         )
                     else:
-                        forward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "forward", name.split("_")[0]
-                        )
-                        backward_compute_time = _get_aiob_compute_time(
-                            self.compute_cache, "backward", name.split("_")[0]
-                        )
+                        if layer_comp_time != None:
+                            forward_compute_time  = layer_comp_time
+                            backward_compute_time = layer_comp_time
+                        else:
+                            forward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "forward", name.split("_")[0]
+                            )
+                            backward_compute_time = _get_aiob_compute_time(
+                                self.compute_cache, "backward", name.split("_")[0]
+                            )
                         self.workload.append(
                             Work_Item(
                                 name=name,
@@ -627,7 +704,32 @@ class SIMAI_workload:
                                 dp_comm_size=dp_comm_size,
                             )
                         )
+                    if "attention_linear" in name:
+                        # for non-shareded linear in attention block
 
+                        # similar to row linear but without comms
+                        forward_compute_time=_get_aiob_compute_time(
+                            self.compute_cache, "forward", name.split("_")[0]
+                        )
+                        backward_compute_time = _get_aiob_compute_time(
+                            self.compute_cache, "backward", name.split("_")[0]
+                        )
+                        if self.args.recompute_activations:
+                            forward_compute_time *= 2
+                        self.workload.append(
+                            Work_Item(
+                                name=name,
+                                forward_compute_time=forward_compute_time,
+                                forward_comm="NONE",
+                                forward_comm_size=0,
+                                backward_compute_time=backward_compute_time,
+                                backward_comm="NONE",
+                                backward_comm_size=0,#sp overlap allgather
+                                dp_compute_time=backward_compute_time,
+                                dp_comm=dp_comm,
+                                dp_comm_size=dp_comm_size,
+                            )
+                        )
                     if "row" in name:
                         if self.args.recompute_activations and 'attention' in name:
                             forward_comm_size *= 2
@@ -872,7 +974,10 @@ class simAI_MicroTest:
 if __name__ == "__main__":
     args = get_params()
     print(args)
-    model = MegatronModel(args)
+    if args.frame == "DeepSeek":
+        model = DeepSeekV3Model(args)
+    else:
+        model = MegatronModel(args)
     result_dir = "results/workload/"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
@@ -904,6 +1009,13 @@ if __name__ == "__main__":
             model, args,compute_cache
         )
         name_layers = work.workload_generate_aiob()
+
+        # set comm_size = 0 for any comm_type == NONE
+        for i in range(len(work.workload)):
+            if work.workload[i].forward_comm == "NONE":
+                work.workload[i].forward_comm_size = 0
+            if work.workload[i].backward_comm == "NONE":
+                work.workload[i].backward_comm_size = 0
 
         work.dump_file(filepath)
         print("workload save in :", filepath)
