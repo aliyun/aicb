@@ -38,7 +38,7 @@ except ImportError:
     except ImportError:
         flash_attn_unpadded_func = None
 
-from workload_generator.mocked_model.AiobDeepSeek import DeepSeekMoE, DeepSeekMLA
+from workload_generator.mocked_model.training.AiobDeepSeek import DeepSeekMoE, DeepSeekMLA
 
 class MegatronModel(torch.nn.Module):
     def __init__(self, args=None):

@@ -229,7 +229,7 @@ By providing the detailed parameters of the model, you can generate a general-pu
 
 Here is an example:
 ```bash
-python -m workload_generator.AIOB_simAI_workload_generator \
+python -m workload_generator.SimAI_training_workload_generator \
   --model_name GPT-13B --frame=Megatron \
   --world_size=16 --tensor_model_parallel_size=2 --pipeline_model_parallel=1 --global_batch=16 \
   --micro_batch=1   --num_layers=40 --seq_length=2048 \

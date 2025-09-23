@@ -19,7 +19,7 @@ License: Apache 2.0
 """
 
 from workload_generator.mocked_model.MockedModel import MockedModel
-from workload_generator.mocked_model.MockedMegatron import *
+from workload_generator.mocked_model.training.MockedMegatron import *
 from utils.utils import CommGroup, CommType
 
 # multiplier to convert BF16 to (FP8 + FP32 scale)

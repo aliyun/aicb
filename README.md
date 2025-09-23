@@ -14,29 +14,26 @@ Welcome to join the SimAI community chat groups, with the DingTalk group on the 
 
 <br/>
 
-# Lastest News
-[2024/9] AICB Version 1.1 Released.
-This version brings the following changes:
+Latest News
 
-Features
-1. Added result visualization functionality, which supports displaying results after physical cluster runs and also supports visualization of generated workload files. For details, see the Readme.
-2. Optimized the method for dividing communication groups, enhancing scalability.
-3. Added support for the AIOB computation pattern for moe group_gemm.
-Made some optimizations to the run_in_cluster script.
+**Announcing AICB 2.0 (September 2025)**
 
-Bug Fixes
+This major release introduces significant new capabilities, focusing on inference workloads and structural improvements.
 
-1. Fixed some calculation errors of BusBw in the log.
-2. Fixed abnormal computation time issues with AIOB during multi-machine runs.
-3. Fixed anomalies in comm_log statistics when computation_enable is on.
-4. Fixed potential hangs in the `run_suite` script.
-5. Fixed errors in generating simAI workload description files when using `tp=1`, `ep=1`.
-6. Fixed some msg size errors related to moe.
+**✨ New Features**
+
+1. **Inference Workload Generation:** Added support for generating **inference** workloads for SimAI, initially for the DeepSeek and Qwen3-MoE models.
+2. **Expanded Training Support:** Training workload generation now includes support for DeepSeek. A special thanks to [@parthpower](https://github.com/parthpower) for contributing this feature!
+3. **Megatron MoE Update:** Upgraded the Megatron integration to use its latest MoE communication method.
+
+**🛠️ Refactoring**
+
+1. **Improved Code Structure:** The `workload_generator/mocked_model` directory has been restructured into separate `inference` and `training` sub-modules for better organization. The existing training logic remains unchanged within the new `training` module.
 
 # Table of Contents
 
 - [Access AICB](#access-aicb)
-- [Lastest News](#lastest-news)
+- [Latest News](#latest-news)
 - [Table of Contents](#table-of-contents)
 - [AICB Overview](#aicb-overview)
   - [Introduction](#introduction)
@@ -51,12 +48,13 @@ Bug Fixes
     - [Running workloads for DeepSpeed](#running-workloads-for-deepspeed)
     - [Running workloads for DeepSeek](#running-workloads-for-deepseek)
     - [Embedding the compuation patterns in the workload](#embedding-the-compuation-patterns-in-the-workload)
-  - [Generate Workloads for Simulation (SimAI)](#generate-workloads-for-simulation-simai)
+  - [Generate Workloads for Traning Simulation (SimAI)](#generate-workloads-for-training-simulation-simai)
     - [Generating the workload description files for the whole benchmark suite](#generating-the-workload-description-files-for-the-whole-benchmark-suite)
     - [Generating the workload description files for Megatron](#generating-the-workload-description-files-for-megatron)
     - [Generating the workload description files for Moe](#generating-the-workload-description-files-for-moe)
     - [Generating the workload description files for DeepSeek](#generating-the-workload-description-files-for-deepseek)
     - [Generating the workload description files for DeepSpeed](#generating-the-workload-description-files-for-deepspeed)
+  - [Generate Workloads for Inference Simulation (SimAI)](#generate-workloads-for-inference-simulation-simai)
   - [Running AICB with customized parameters](#running-aicb-with-customized-parameters)
     - [Running customized workloads on physical GPU clusters](#running-customized-workloads-on-physical-gpu-clusters)
     - [Generating customized workload description files](#generating-customized-workload-description-files)
@@ -214,7 +212,7 @@ sh scripts/megatron_gpt.sh \
 --aiob_enable  \
 --comp_filepath workload/aiob_inputs/Example.txt
 ```
-## Generate Workloads for Simulation (SimAI)
+## Generate Workloads for Training Simulation (SimAI)
 In addition to running the AICB in the GPU clusters, AICB also generates the workload description files which can be used for simulation or further analysis.
 In this release, we provide [scripts](scripts/megatron_workload_with_aiob.sh) for quickly generating workloads for SimAI.
 For now Linear Attention Models are not supported. To customize your own workloads, please refer to [Customized parameters](workload_generator/mocked_model/MockedModel.py) and add new models.
@@ -274,6 +272,31 @@ For the `DeepSpeed` parallel framework, you can use [scripts/workload_deepspeed.
 sh ./scripts/workload_deepspeed.sh -m 7 
 ```
 
+## Generate Workloads for Inference Simulation (SimAI)
+
+Use the [scripts/inference_workload_with_aiob.sh](scripts/inference_workload_with_aiob.sh) script to generate a workload description file.
+
+- Pass the `--aiob_enable` flag to enable AIOB for computation modeling. Without it, a fixed computation time is used by default.
+- Specify all parameters in a configuration file and provide it using the `--config` option.
+
+Here are some examples:
+
+- Generating DeepSeek workload description files with computation times generated by AIOB.
+  
+
+```bash
+sh ./scripts/inference_workload_with_aiob.sh -m deepseek-671B \
+-c ./scripts/inference_configs/deepseek_default_aiob.json
+```
+
+- Generating Qwen3 workload description files with default computation time.
+  
+
+```bash
+sh ./scripts/inference_workload_with_aiob.sh -m qwen3-235B \
+-c ./scripts/inference_configs/qwen3_default.json
+```
+
 ## Running AICB with customized parameters
 In addition to quick start, you can also customize the model parameters in detail to run on physical clusters or generate the required workloads for simulation and analysis. For more detailed parameter descriptions and more Example, please refer to [the tutorial](training/tutorial.md).
 
@@ -294,11 +317,11 @@ torchrun \
 ```
 ### Generating customized workload description files
 Similarly, when generating workloads, you can also customize the model training parameters and modifying the generated files to generate your own workload file for simulation. This can be achieved by using the following files:
-[generate custom description file](workload_generator/AIOB_simAI_workload_generator.py)
+[generate custom description file](workload_generator/SimAI_training_workload_generator.py)
 
 Here is an example:
 ```bash
-python -m workload_generator.AIOB_simAI_workload_generator \
+python -m workload_generator.SimAI_training_workload_generator \
 --world_size=32  --global_batch=64 --micro_batch=1 \
 --num_layers=8 --num_attention_heads=176 --hidden_size=5120   \
 --tensor_model_parallel_size=2 --seq_length=4096 --swiglu --ffn_hidden_size=16384  \

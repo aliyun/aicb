@@ -36,7 +36,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-# from  workload_generator.mocked_model.AiobMegatron import linear_with_grad_accumulation_and_async_allreduce
+# from  workload_generator.mocked_model.training.AiobMegatron import linear_with_grad_accumulation_and_async_allreduce
 # can't import because of circular imports
 # FIXME: maybe move this to utils
 

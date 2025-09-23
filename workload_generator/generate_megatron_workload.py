@@ -19,8 +19,8 @@ python -m workload_generator.megatron_workload \
 """
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter, num_parameters_to_bytes
 from workload_generator.workload_generator import WorkloadGenerator
-from workload_generator.mocked_model.MockedMegatron import MegatronModel
-from workload_generator.mocked_model.MockedDeepSeek import DeepSeekV3Model
+from workload_generator.mocked_model.training.MockedMegatron import MegatronModel
+from workload_generator.mocked_model.training.MockedDeepSeek import DeepSeekV3Model
 from log_analyzer.log import LogItem
 
 

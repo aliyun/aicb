@@ -11,10 +11,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from workload_generator.mocked_model import MockedDeepSeek
-import workload_generator.mocked_model.MockedDeepspeed
-from workload_generator.mocked_model.MockedMegatron import *
-from workload_generator.mocked_model.MockedDeepSeek import *
+from workload_generator.mocked_model.training import MockedDeepSeek
+import workload_generator.mocked_model.training.MockedDeepspeed
+from workload_generator.mocked_model.training.MockedMegatron import *
+from workload_generator.mocked_model.training.MockedDeepSeek import *
 from workload_generator.mocked_model.MockedModel import MockedParam, MockedModel
 from utils.utils import CommType, get_params, get_comp_out, extract_averages
 import os
