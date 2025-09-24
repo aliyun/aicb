@@ -23,7 +23,7 @@ This major release introduces significant new capabilities, focusing on inferenc
 **✨ New Features**
 
 1. **Inference Workload Generation:** Added support for generating **inference** workloads for SimAI, initially for the DeepSeek and Qwen3-MoE models. The DeepSeek support was contributed by [@Yan824](https://github.com/Yan824) and leverages the work from the [DeepSeek_Simulator](https://github.com/shenh10/DeepSeek_Simulator
-) project.
+) project. The Qwen3-Moe support is based on [vLLM](https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/models/qwen3_moe.py).
 2. **Expanded Training Support:** Training workload generation now includes support for DeepSeek. A special thanks to [@parthpower](https://github.com/parthpower) for contributing this feature!
 3. **Megatron MoE Update:** Upgraded the Megatron integration to use its latest MoE communication method.
 
