@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import pandas as pd
 import pickle
 from enum import Enum
@@ -23,6 +23,7 @@ import json
 from collections import defaultdict
 import math
 import re
+import numpy as np
 
 try:
     import torch
@@ -259,7 +260,7 @@ def get_comp_out(args):
     vocab_size = args.padded_vocab_size
     if "Megatron" or "DeepSeek" in args.frame:
         device = torch.cuda.current_device()
-        from workload_generator.mocked_model.AiobMegatron import MegatronModel
+        from workload_generator.mocked_model.training.AiobMegatron import MegatronModel
         measure_model = MegatronModel(args)
         measure_model.train()
         if args.dtype == "bfloat16":
@@ -284,6 +285,83 @@ def get_comp_out(args):
 
     
 
+def extract_inference_averages(file_path,args):
+    attention_norm_avg_sum = 0.0
+    attention_avg_sum = 0.0
+    mlp_avg_sum = 0.0
+    moe_norm_avg_sum = 0.0
+    moe_route_avg_sum = 0.0
+    moe_expert_sum = 0.0
+
+    section_header_re = re.compile(r"^(\w+):")
+    time_gpu_avg_re = re.compile(r"time_gpu_avg:\s+(\d+(\.\d+)?)")
+    # time_gpu_min_re = re.compile(r"time_gpu_min:\s+(\d+(\.\d+)?)")
+
+    if args.aiob_enable:
+        with open(file_path, "r") as file:
+            current_section = None
+
+            for line in file:
+                header_match = section_header_re.match(line)
+                if header_match:
+                    current_section = header_match.group(1).strip()
+
+                avg_match = time_gpu_avg_re.search(line)
+                # min_match = time_gpu_min_re.search(line)
+                if avg_match and current_section:
+                    avg_value = float(avg_match.group(1)) * 1000
+                    if "atten_norm" in current_section:
+                        attention_norm_avg_sum += avg_value
+                    elif "atten" in current_section:
+                        attention_avg_sum += avg_value
+                    elif "mlp" in current_section:
+                        mlp_avg_sum += avg_value
+                    elif "moe_norm" in current_section:
+                        moe_norm_avg_sum += avg_value
+                    elif "moe_route" in current_section:
+                        moe_route_avg_sum += avg_value
+                    elif "moe" in current_section:
+                        moe_expert_sum += avg_value
+
+    compute_cache = {
+        "attention_norm": round(attention_norm_avg_sum),
+        "attention_layer": round(attention_avg_sum),
+        "mlp": round(mlp_avg_sum),
+        "moe_norm": round(moe_norm_avg_sum),
+        "moe_route": round(moe_route_avg_sum),
+        "moe_expert":round(moe_expert_sum),
+    }
+
+    return compute_cache
+
+
+def get_compute_path(args):
+    result_dir = "./results/aiob_outputs"
+    if not os.path.isdir(result_dir):
+        os.makedirs(result_dir)
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp1-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}.txt"
+    filepath = os.path.join(result_dir, filename)
+    return filepath
+
+def write_time(time_list, args):
+    filepath = get_compute_path(args)
+    with open(filepath, "w") as file:
+        file.write("inference_term:decode\n")
+        data_str = json.dumps(time_list, indent=4)
+
+        file.write(data_str)
+    return filepath
+
+def calculate_stats(time_list, file_name):
+    stats = {}
+    for key, values in time_list.items():
+        times = [entry['time_gpu'] for entry in values]
+        variance = np.var(times)
+        p99 = np.percentile(times, 99)
+        stats[key] = {'variance': variance, 'P99': p99}
+    with open(file_name, 'w') as file:
+        json.dump(stats, file, indent=4)
+    print("output stats successfully")
 
 def extract_averages(file_path,args):
     attention_avg_sum = 0.0

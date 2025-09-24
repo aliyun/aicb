@@ -24,7 +24,7 @@ python -m workload_generator.deepspeed_stage1_2_workload \
 """
 
 import math
-from workload_generator.mocked_model.MockedDeepspeed import DeepspeedForCausalLM
+from workload_generator.mocked_model.training.MockedDeepspeed import DeepspeedForCausalLM
 from workload_generator.mocked_model.MockedModel import MockedModel
 from workload_generator.workload_generator import WorkloadGenerator
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter

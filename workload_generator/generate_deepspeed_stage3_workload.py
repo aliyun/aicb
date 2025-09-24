@@ -18,7 +18,7 @@ python -m workload_generator.generate_deepspeed_stage3_workload \
   --reduce_bucket_size=26214400 --allgather_bucket_size=500000000 --contiguous_gradients
 """
 
-from workload_generator.mocked_model.MockedDeepspeed import DeepspeedForCausalLM
+from workload_generator.mocked_model.training.MockedDeepspeed import DeepspeedForCausalLM
 from workload_generator.mocked_model.MockedModel import MockedModel
 from workload_generator.workload_generator import WorkloadGenerator
 from utils.utils import CommGroup, CommType, get_params, WorkloadWriter

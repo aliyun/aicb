@@ -237,7 +237,7 @@ case $model_size in
 esac
 
 
-cmd="python -m workload_generator.AIOB_simAI_workload_generator \
+cmd="python -m workload_generator.SimAI_training_workload_generator \
   --gpu_type=$gpu_type \
   --frame=$frame \
   --world_size=$world_size \

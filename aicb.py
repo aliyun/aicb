@@ -13,9 +13,9 @@ limitations under the License.
 import torch
 from utils.utils import get_args, get_comp_out, extract_averages, Comp_with_aiob
 from utils.benchmark_logger import bench_logger
-from workload_generator.mocked_model.MockedDeepspeed import DeepspeedForCausalLM
-from workload_generator.mocked_model.MockedDeepSeek import DeepSeekV3Model
-from workload_generator.mocked_model.MockedMegatron import MegatronModel
+from workload_generator.mocked_model.training.MockedDeepspeed import DeepspeedForCausalLM
+from workload_generator.mocked_model.training.MockedDeepSeek import DeepSeekV3Model
+from workload_generator.mocked_model.training.MockedMegatron import MegatronModel
 from workload_generator.generate_deepspeed_stage1_2_workload import (
     DeepSpeedStage1,
     DeepSpeedStage2,
