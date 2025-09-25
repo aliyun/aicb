@@ -9,7 +9,7 @@ Welcome to join the SimAI community chat groups, with the DingTalk group on the 
 
 <div style="display: flex; justify-content: flex-start; align-items: center; gap: 20px; margin-left: 20px;">
     <img src="./images/simai_dingtalk.jpg" alt="SimAI DingTalk" style="width: 300px; height: auto;">
-    <img src="./images/simai_wechat.jpg" alt="SimAI WeChat" style="width: 300px; height: auto;">
+    <img src="./images/simai_wechat.jpeg" alt="SimAI WeChat" style="width: 300px; height: auto;">
 </div>
 
 <br/>
