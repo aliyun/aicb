@@ -1,5 +1,5 @@
 import torch
-
+from typing import Tuple
 import deep_gemm
 from deep_gemm import calc_diff, ceil_div, get_col_major_tma_aligned_tensor
 
