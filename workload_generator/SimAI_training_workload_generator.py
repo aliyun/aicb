@@ -431,7 +431,7 @@ class SIMAI_workload:
                             )
                         
                         # MoE Communication is based on Megatron core_v0.13.0:https://github.com/NVIDIA/Megatron-LM/blob/core_v0.13.0
-                        forward_comm1 = "ALLGATHER" # for EP
+                        forward_comm1 = "ALLGATHER_EP" # for EP
                         forward_comm2 = "ALLTOALL_EP"
                         forward_comm3 = "ALLGATHER"
                         forward_comm4 = "REDUCESCATTER"
@@ -711,7 +711,7 @@ class SIMAI_workload:
                                     dp_compute_time=default_compute_time, dp_comm=dp_comm, dp_comm_size=dp_comm_size
                                     ))
                     if "moelayer" in name:
-                        forward_comm1 = "ALLGATHER" # for EP
+                        forward_comm1 = "ALLGATHER_EP" # for EP
                         forward_comm2 = "ALLTOALL_EP"
                         forward_comm3 = "ALLGATHER"
                         forward_comm4 = "REDUCESCATTER"
