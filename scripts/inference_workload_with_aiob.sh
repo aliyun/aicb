@@ -3,7 +3,9 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 model_size=deepseek-671B
 config_file_path=
 dpsk_default_path="$SCRIPT_DIR/inference_configs/deepseek_default.json"
-qwen3_default_path="$SCRIPT_DIR/inference_configs/qwen3_default.json"
+qwen3_moe_default_path="$SCRIPT_DIR/inference_configs/qwen3_moe_default.json"
+qwen3_next_default_path="$SCRIPT_DIR/inference_configs/qwen3_next_default.json"
+
 usage() {
   echo "Usage: \$0 [options]
     options:
@@ -34,7 +36,11 @@ case $model_size in
     ;;
   qwen3-235B)
     model_name=Qwen3-Moe-235B
-    config_file_path=${config_file_path:-$qwen3_default_path}
+    config_file_path=${config_file_path:-$qwen3_moe_default_path}
+    ;;
+  qwen3-next-80B)
+    model_name=Qwen3-Next-80B
+    config_file_path=${config_file_path:-$qwen3_next_default_path}
     ;;
   (*)
     break;;

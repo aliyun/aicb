@@ -302,7 +302,7 @@ sh ./scripts/inference_workload_with_aiob.sh -m deepseek-671B \
 
 ```bash
 sh ./scripts/inference_workload_with_aiob.sh -m qwen3-235B \
--c ./scripts/inference_configs/qwen3_default.json
+-c ./scripts/inference_configs/qwen3_moe_default.json
 ```
 
 ## Running AICB with customized parameters
