@@ -2,9 +2,10 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSeek
 import workload_generator.mocked_model.MockedModel
-import workload_generator.mocked_model.inference.MockedQwen3 as MockedQwen3
+import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSeek
+import workload_generator.mocked_model.inference.MockedQwen3Moe as MockedQwen3Moe
+import workload_generator.mocked_model.inference.MockedQwen3Next as MockedQwen3Next
 from utils.utils import CommType, get_params, get_comp_out, extract_inference_averages
 import os
 from typing import List, Tuple
@@ -91,10 +92,15 @@ class SimAIWorkload():
                     # or isinstance(model, MockedDeepSeek.DeepSeekMOE)
                     # or isinstance(model, MockedDeepSeek.DeepSeekColumnLinear)
                     # or isinstance(model, MockedDeepSeek.DeepSeekRowLinear)
-                    or isinstance(model, MockedQwen3.Qwen3MoeRMSNorm)
-                    or isinstance(model, MockedQwen3.Qwen3MoeAttention)
-                    or isinstance(model, MockedQwen3.Qwen3MoeRoute)
-                    or isinstance(model, MockedQwen3.Qwen3MoeExpert)
+                    or isinstance(model, MockedQwen3Moe.Qwen3MoeRMSNorm)
+                    or isinstance(model, MockedQwen3Moe.Qwen3MoeAttention)
+                    or isinstance(model, MockedQwen3Moe.Qwen3MoeRoute)
+                    or isinstance(model, MockedQwen3Moe.Qwen3MoeExpert)
+                    or isinstance(model, MockedQwen3Next.Qwen3NextRMSNorm)
+                    or isinstance(model, MockedQwen3Next.Qwen3NextAttention)
+                    or isinstance(model, MockedQwen3Next.Qwen3NextGatedDeltaNet)
+                    or isinstance(model, MockedQwen3Next.Qwen3NextRoute)
+                    or isinstance(model, MockedQwen3Next.Qwen3NextExpert)
                 ):
                     layers.append(LayerInfo(model.layer_id, model.name))
             for child in model.child_modules():
@@ -117,7 +123,7 @@ class SimAIWorkload():
             forward_comm_size = tp_comm_size
             ep_dispatch_size = tp_comm_size * self.topk // self.tp
             ep_combine_size = tp_comm_size * self.topk // self.tp
-            if self.args.frame == "DeepSeek" or self.args.frame == "Qwen3-Moe":
+            if any(s in self.args.frame for s in ('DeepSeek', 'Qwen3')):
                 # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
                 ep_dispatch_size = int(ep_dispatch_size * MockedDeepSeek.FP8_FACTOR)
 
@@ -261,8 +267,11 @@ if __name__ == "__main__":
         config_file = sys.argv[2]
     
     if "Qwen3-Moe" in model_name:
-        args = MockedQwen3.Qwen3MoeParams(config_file)
-        model = MockedQwen3.Qwen3MoeModel(args)
+        args = MockedQwen3Moe.Qwen3MoeParams(config_file)
+        model = MockedQwen3Moe.Qwen3MoeModel(args)
+    elif "Qwen3-Next" in model_name:
+        args = MockedQwen3Next.Qwen3NextParams(config_file)
+        model = MockedQwen3Next.Qwen3NextModel(args)
     elif "DeepSeek" in model_name:
         args = MockedDeepSeek.DeepSeekParams(config_file)
         model = MockedDeepSeek.DeepSeekModel(args)
@@ -279,8 +288,12 @@ if __name__ == "__main__":
     
     if args.aiob_enable:
         if "Qwen3-Moe" in model_name:
-            import workload_generator.mocked_model.inference.AiobQwen3 as AiobQwen3
-            aiob_model = AiobQwen3.Qwen3MoeModel(args)
+            import workload_generator.mocked_model.inference.AiobQwen3Moe as AiobQwen3Moe
+            aiob_model = AiobQwen3Moe.Qwen3MoeModel(args)
+            aiob_output_filepath = aiob_model()
+        elif "Qwen3-Next" in model_name:
+            import workload_generator.mocked_model.inference.AiobQwen3Next as AiobQwen3Next
+            aiob_model = AiobQwen3Next.Qwen3NextModel(args)
             aiob_output_filepath = aiob_model()
         elif "DeepSeek" in model_name:
             import workload_generator.mocked_model.inference.AiobDeepSeek as AiobDeepSeek

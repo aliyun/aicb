@@ -287,6 +287,7 @@ def get_comp_out(args):
 
 def extract_inference_averages(file_path,args):
     attention_norm_avg_sum = 0.0
+    attention_gdn_avg_sum = 0.0
     attention_avg_sum = 0.0
     mlp_avg_sum = 0.0
     moe_norm_avg_sum = 0.0
@@ -312,6 +313,8 @@ def extract_inference_averages(file_path,args):
                     avg_value = float(avg_match.group(1)) * 1000
                     if "atten_norm" in current_section:
                         attention_norm_avg_sum += avg_value
+                    elif "gdn" in current_section:
+                        attention_gdn_avg_sum += avg_value
                     elif "atten" in current_section:
                         attention_avg_sum += avg_value
                     elif "mlp" in current_section:
@@ -323,14 +326,16 @@ def extract_inference_averages(file_path,args):
                     elif "moe" in current_section:
                         moe_expert_sum += avg_value
 
-    compute_cache = {
+    full_cache = {
         "attention_norm": round(attention_norm_avg_sum),
+        "attention_gdn": round(attention_gdn_avg_sum),
         "attention_layer": round(attention_avg_sum),
         "mlp": round(mlp_avg_sum),
         "moe_norm": round(moe_norm_avg_sum),
         "moe_route": round(moe_route_avg_sum),
-        "moe_expert":round(moe_expert_sum),
+        "moe_expert": round(moe_expert_sum),
     }
+    compute_cache = {key: value for key, value in full_cache.items() if value != 0}
 
     return compute_cache
 
