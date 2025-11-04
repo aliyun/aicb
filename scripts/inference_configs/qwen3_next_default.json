@@ -1,15 +1,4 @@
 {
-  "aiob_enable": false,
-  "model_name": "Qwen3-Next-80B",
-  "frame": "Qwen3-Next-80B",
-  "seq_length": 1,
-  "micro_batch": 64,
-  "world_size": 32,
-  "tensor_model_parallel_size": 1,
-  "expert_model_parallel_size": 32,
-  "pipeline_model_parallel": 1,
-  "moe_enable": true,
-  "result_dir": "results/workload/",
   "architectures": [
     "Qwen3NextForCausalLM"
   ],

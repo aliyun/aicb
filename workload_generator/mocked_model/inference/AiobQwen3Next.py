@@ -1,6 +1,7 @@
 import torch
 # torch.set_default_device("cuda")
 import workload_generator.mocked_model.inference.MockedQwen3Next as MockedQwen3Next
+from workload_generator.mocked_model.MockedModel import InferencePhase
 from utils.utils import *
 from utils.deepgemm_utils import *
 import torch.nn.functional as F
@@ -99,8 +100,7 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
             device='cuda', dtype=torch.bfloat16
         )
 
-    def _attn_quant(self, qk_or_o):
-        m = self.args.micro_batch
+    def _attn_quant(self, qk_or_o, m):
         if qk_or_o:
             n = self.args.hidden_size
         else:
@@ -124,8 +124,7 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
 
         raise RuntimeError(f"bench_kineto failed for all candidates: {last_err}")
     
-    def _attn_proj(self, k, n):
-        m = self.args.micro_batch
+    def _attn_proj(self, k, n, m):
         x_fp8, y_fp8, out, ref_out = construct(m, k, n)
         deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
         diff = calc_diff(out, ref_out)
@@ -136,11 +135,11 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
-    def _causal_conv(self):
+    def _causal_conv(self, m):
         n = (self.args.num_attention_heads * self.args.head_dim + self.args.linear_num_key_heads*self.args.linear_key_head_dim + self.args.linear_num_value_heads*self.args.linear_value_head_dim) // self.tp
 
         def test_func():
-            test_causal_conv1d_update(batch=self.args.micro_batch, 
+            test_causal_conv1d_update(batch=m, 
                                       dim=n, 
                                       width=self.args.linear_conv_kernel_dim,
                                       seqlen=1, # TODO decoding self.args.seq_length
@@ -148,12 +147,12 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         t = bench_kineto(test_func, "_causal_conv1d_update_kernel", suppress_kineto_output=True)
         return t
 
-    def _fused_gdn_gating(self):
+    def _fused_gdn_gating(self, m):
         A_log = torch.empty(
                 divide(self.args.linear_num_value_heads, self.tp),
                 dtype=torch.float32,
             )
-        a = torch.randn(self.args.micro_batch, self.args.linear_num_value_heads//self.tp, device='cuda', dtype=torch.bfloat16)
+        a = torch.randn(m, self.args.linear_num_value_heads//self.tp, device='cuda', dtype=torch.bfloat16)
         dt_bias = torch.ones(self.args.linear_num_value_heads // self.tp)
 
         batch, num_heads = a.shape
@@ -176,8 +175,14 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         return t
     
     def _fused_gdn_core(self):
-        B = self.args.micro_batch
-        T = self.args.seq_length #* self.args.micro_batch
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            B = self.args.micro_batch
+            T = 1
+        elif phase == InferencePhase.PREFILL.value:
+            B = 1
+            T = self.args.seq_length
+
         H = self.args.linear_num_key_heads // self.tp
         HV = self.args.linear_num_value_heads // self.tp
         K = self.args.linear_key_head_dim
@@ -192,7 +197,7 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         # h0 = torch.empty(B, HV, V, device=q.device, dtype=v.dtype)
         h0 = torch.randn(B, HV, K, V, device='cuda', dtype=torch.bfloat16).contiguous()
 
-        ssm = torch.zeros(B, T, device='cuda', dtype=torch.int32).contiguous()
+        ssm = torch.zeros(B*T, device='cuda', dtype=torch.int32).contiguous()
         # ssm = None
 
         # print('q', q.shape, q.stride())
@@ -217,8 +222,7 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         t = bench_kineto(test_func, "fused_recurrent_gated_delta_rule_fwd_kernel", suppress_kineto_output=True)
         return t
         
-    def _norm(self):
-        m = self.args.micro_batch
+    def _norm(self, m):
         k = self.args.linear_num_value_heads // self.tp
         n = self.args.linear_value_head_dim
 
@@ -231,24 +235,30 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         return t
     
     def forward(self):
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.args.micro_batch
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+
         # 1. qkv
-        qkv_quant = self._attn_quant(True)
+        qkv_quant = self._attn_quant(True, m)
         
         qkvz_proj_k = self.args.hidden_size
         qkvz_proj_n = (self.args.linear_value_head_dim+self.args.linear_value_head_dim)*2 // self.tp
-        qkvz_proj = self._attn_proj(qkvz_proj_k, qkvz_proj_n)
+        qkvz_proj = self._attn_proj(qkvz_proj_k, qkvz_proj_n, m)
 
         ba_proj_k = self.args.hidden_size
         ba_proj_n = self.args.linear_num_value_heads*2 // self.tp
-        ba_proj = self._attn_proj(ba_proj_k, ba_proj_n)
+        ba_proj = self._attn_proj(ba_proj_k, ba_proj_n, m)
         
         attn_qkv = qkv_quant+qkvz_proj+ba_proj
 
         # 2. Causal Convolution
-        attn_causal_conv = self._causal_conv()
+        attn_causal_conv = self._causal_conv(m)
 
         # 3. Recurrent Attention
-        gdn_gating = self._fused_gdn_gating()
+        gdn_gating = self._fused_gdn_gating(m)
         #fused_recurrent_gated_delta_rule
         gdn_core = self._fused_gdn_core()
 
@@ -257,11 +267,11 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         # 4. output
         # attn_out_norm=RMSNormGated
 
-        o_norm = self._norm()
-        o_quant = self._attn_quant(False)
+        o_norm = self._norm(m)
+        o_quant = self._attn_quant(False, m)
         o_proj_k = self.args.linear_value_head_dim // self.tp
         o_proj_n = self.args.hidden_size
-        o_proj = self._attn_proj(o_proj_k,o_proj_n)
+        o_proj = self._attn_proj(o_proj_k,o_proj_n, m)
         
         attn_o = o_norm + o_quant + o_proj
 
@@ -274,8 +284,7 @@ class Qwen3NextAttention(torch.nn.Module):
         self.args = args
         self.tp = self.args.tensor_model_parallel_size
     
-    def _attn_quant(self, qk_or_o):
-        m = self.args.micro_batch
+    def _attn_quant(self, qk_or_o, m):
         if qk_or_o:
             n = self.args.hidden_size
         else:
@@ -299,8 +308,7 @@ class Qwen3NextAttention(torch.nn.Module):
 
         raise RuntimeError(f"bench_kineto failed for all candidates: {last_err}")
 
-    def _attn_proj(self, qk_or_o):
-        m = self.args.micro_batch
+    def _attn_proj(self, qk_or_o, m):
         if qk_or_o:
             n = (self.args.num_attention_heads + self.args.num_key_value_heads * 2) * self.args.head_dim // self.tp
             k = self.args.hidden_size
@@ -316,8 +324,7 @@ class Qwen3NextAttention(torch.nn.Module):
             deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
-    def _qk_norm(self, q_or_k):
-        m = self.args.micro_batch
+    def _qk_norm(self, q_or_k, m):
         head_dim = self.args.head_dim
         if q_or_k:
             n = self.args.num_attention_heads * head_dim // self.tp
@@ -328,8 +335,7 @@ class Qwen3NextAttention(torch.nn.Module):
         residual = torch.rand_like(x, device='cuda', dtype=torch.bfloat16)
         return GemmaRMSNormTest(head_dim,self.args.rms_norm_eps,x, residual)
             
-    def _rotary_emb(self):
-        m = self.args.micro_batch
+    def _rotary_emb(self, m):
         head_dim = self.args.head_dim
         n_q = self.args.num_attention_heads * head_dim // self.tp
         n_k = self.args.num_key_value_heads * head_dim // self.tp
@@ -353,12 +359,10 @@ class Qwen3NextAttention(torch.nn.Module):
         t = bench_kineto(test_func, 'rotary_embedding_kernel', suppress_kineto_output=True)
         return t
 
-    def _attn_core(self):
+    def _attn_core(self, kv_lens):
         block_size = 32
         num_blocks = 32768 
         
-        seq_len = self.args.seq_length
-        kv_lens = [seq_len] * self.args.micro_batch
         head_size = self.args.head_dim
         num_query_heads = self.args.num_attention_heads // self.tp
         num_kv_heads = self.args.num_key_value_heads// self.tp
@@ -433,22 +437,30 @@ class Qwen3NextAttention(torch.nn.Module):
         return t
 
     def forward(self):
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.args.micro_batch
+            kv_lens = [self.args.seq_length] * m
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+            kv_lens = [self.args.seq_length] * 1
+
         # qkv
-        qkv_quant = self._attn_quant(True)
-        qkv_proj = self._attn_proj(True)
-        q_norm = self._qk_norm(True)
-        k_norm = self._qk_norm(False)
+        qkv_quant = self._attn_quant(True,m)
+        qkv_proj = self._attn_proj(True,m)
+        q_norm = self._qk_norm(True,m)
+        k_norm = self._qk_norm(False,m)
         attn_qkv = qkv_quant + qkv_proj + q_norm + k_norm
 
         # rotary_embedding
-        rotary_emb = self._rotary_emb()
+        rotary_emb = self._rotary_emb(m)
 
         # core
-        attn = self._attn_core()
+        attn = self._attn_core(kv_lens)
 
         # o
-        o_quant = self._attn_quant(False)
-        o_proj = self._attn_proj(False)
+        o_quant = self._attn_quant(False,m)
+        o_proj = self._attn_proj(False,m)
         attn_o = o_quant + o_proj
 
         return attn_qkv, rotary_emb, attn, attn_o
@@ -464,9 +476,9 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
         self.tp = args.tensor_model_parallel_size
         self.topk = args.num_experts_per_tok
     
-    def _route_gate(self):
+    def _route_gate(self, m):
         # ReplicatedLinear
-        x = torch.randn(self.batch_size, self.hidden_size, device='cuda', dtype=torch.bfloat16)
+        x = torch.randn(m, self.hidden_size, device='cuda', dtype=torch.bfloat16)
         w = torch.randn(self.num_experts, self.hidden_size, device='cuda', dtype=torch.bfloat16)
         # print(x.shape, w.shape)
 
@@ -490,11 +502,10 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
 
         raise RuntimeError(f"bench_kineto failed for all candidates: {last_err}")      
 
-    def _select_experts(self):
+    def _select_experts(self, total_tokens):
         # FusedMoE.select_experts
-        seq_len = 1024 #TODO
-        hidden_states = torch.randn(self.batch_size * seq_len, self.hidden_size, device='cuda', dtype=torch.bfloat16)
-        router_logits = torch.randn(self.batch_size * seq_len, self.num_experts, device='cuda', dtype=torch.bfloat16)
+        hidden_states = torch.randn(total_tokens, self.hidden_size, device='cuda', dtype=torch.bfloat16)
+        router_logits = torch.randn(total_tokens, self.num_experts, device='cuda', dtype=torch.bfloat16)
 
         def test_func():
             fused_topk(hidden_states=hidden_states,
@@ -509,10 +520,9 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
         t = sum(bench_kineto(test_func, kernel_names, suppress_kineto_output=True))
         return t
 
-    def _moe_gate_proj(self, up_or_down):
+    def _moe_gate_proj(self, up_or_down, m):
         num_groups=self.num_experts // self.ep
-        gbs = self.batch_size * (self.args.world_size // self.tp)
-        m = gbs * self.topk // self.num_experts
+        total = max(m * (self.args.world_size // self.tp) * self.topk // self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
         if up_or_down:
             n = 2 * self.args.moe_intermediate_size
             k = self.hidden_size
@@ -522,47 +532,54 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
 
         def test_func():
             x_fp8, y_fp8, out, ref_out = construct_grouped(
-                            num_groups, m, k, n, is_masked=True
+                            num_groups, total, k, n, is_masked=True
                         )
             masked_m = torch.ones(
-                        (num_groups,), device='cuda:0', dtype=torch.int) * m
+                        (num_groups,), device='cuda:0', dtype=torch.int) * total
             deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                        x_fp8, y_fp8, out, masked_m, m
+                        x_fp8, y_fp8, out, masked_m, total
                     )
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
 
         return t
 
-    def _moe_act(self):
+    def _moe_act(self, m):
         # SiluAndMul
         num_groups=self.num_experts // self.ep
-        gbs = self.batch_size * (self.args.world_size // self.tp)
-        m = gbs * self.topk // self.num_experts
+        total = m * (self.args.world_size // self.tp) * self.topk // self.num_experts
         n = 2 * self.args.moe_intermediate_size
 
-        m_max = m # TODO: maybe should set in config
-        intermediate_cache1 = torch.randn((num_groups * m_max, n),
+        total_max = total # TODO: maybe should set in config
+        intermediate_cache1 = torch.randn((num_groups * total_max, n),
                                         device='cuda',
                                         dtype=torch.bfloat16)
-        intermediate_cache2 = torch.randn((num_groups * m_max, n // 2),
+        intermediate_cache2 = torch.randn((num_groups * total_max, n // 2),
                                         device='cuda',
                                         dtype=torch.bfloat16)
         
         def test_func():
             torch.ops._C.silu_and_mul(
-                intermediate_cache2.unflatten(0, (num_groups, m_max)),
-                intermediate_cache1.unflatten(0, (num_groups, m_max)))
+                intermediate_cache2.unflatten(0, (num_groups, total_max)),
+                intermediate_cache1.unflatten(0, (num_groups, total_max)))
         # vllm::silu vllm::act_and_mul
         t = bench_kineto(test_func, "vllm::silu", suppress_kineto_output=True)
         return t
 
 
     def forward(self):
-        route_gate = self._route_gate()
-        route_select_experts = self._select_experts()
-        moe_up = self._moe_gate_proj(True)
-        moe_act = self._moe_act()
-        moe_down = self._moe_gate_proj(False)
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.args.micro_batch
+            total_tokens = m * 1024 # TODO: maybe should set output seq_length
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+            total_tokens = m
+
+        route_gate = self._route_gate(m)
+        route_select_experts = self._select_experts(total_tokens)
+        moe_up = self._moe_gate_proj(True, m)
+        moe_act = self._moe_act(m)
+        moe_down = self._moe_gate_proj(False, m)
 
         return route_gate, route_select_experts, moe_up, moe_act, moe_down
 
@@ -577,17 +594,21 @@ class Qwen3NextModel(torch.nn.Module):
         self.GDN = Qwen3NextGatedDeltaNet(self.args)
         # self.MLP = Qwen3NextMLP(self.args) # TODO add MLP only
         self.MoE = Qwen3NextSparseMoeBlock(self.args)
-        self.forward_loops = getattr(args, "forward_loops",10)
+        self.aiob_forward_loops = getattr(args, "aiob_forward_loops", 10)
     
     def _norm(self):
-        m = self.args.micro_batch
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.args.micro_batch
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
         hidden_size = self.args.hidden_size
         x = torch.randn(m,hidden_size, device='cuda', dtype=torch.bfloat16)
         residual = torch.randn(m,hidden_size, device='cuda', dtype=torch.bfloat16)
         return GemmaRMSNormTest(hidden_size, self.args.rms_norm_eps, x, residual)
     
     def forward(self):
-        for i in range(self.forward_loops):
+        for i in range(self.aiob_forward_loops):
             # print(f'======================{i}======================')
             # 1. input_layernorm
             pre_norm = self._norm()

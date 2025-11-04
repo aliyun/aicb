@@ -1,5 +1,6 @@
 import torch
 import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSeek
+from workload_generator.mocked_model.MockedModel import InferencePhase
 from utils.utils import *
 from utils.deepgemm_utils import *
 import torch.nn.functional as F
@@ -9,7 +10,7 @@ from deep_gemm import bench_kineto, ceil_div, get_col_major_tma_aligned_tensor, 
 from typing import Tuple
 import triton
 import numpy as np
-from flash_mla import flash_mla_with_kvcache, get_mla_metadata
+from flash_mla import flash_mla_with_kvcache, get_mla_metadata, flash_mla_sparse_fwd
 
 def to_float8(x, dtype=torch.float8_e4m3fn):
     finfo = torch.finfo(dtype)
@@ -36,7 +37,6 @@ class DeepSeekEmbedding(torch.nn.Module):
     def __init__(self, args=None):
         super(DeepSeekEmbedding, self).__init__()
         self.tp = args.tensor_model_parallel_size
-        seq_len = args.seq_length
         hidden_size = args.hidden_size
         # max_position_embeddings = args.max_position_embeddings
         self.vocab_size = args.vocab_size
@@ -108,10 +108,9 @@ class DeepSeekAtten(torch.nn.Module):
         self.d_r = args.d_r
         self.d_q = args.d_q
         self.d_kv = args.d_kv
+        self.args = args
 
-    def _qkv_compression(self):
-        #不分TP
-        m = self.batch_size  
+    def _qkv_compression(self, m):
         k = self.hidden_size #7168
         n = self.d_kv_c + self.d_q_c + self.d_r  #2112
         print(f'm={m}, k={k}, n={n}')
@@ -125,8 +124,7 @@ class DeepSeekAtten(torch.nn.Module):
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
-    def _q_uncrompression(self):
-        m = self.batch_size  
+    def _q_uncrompression(self, m):
         k = self.d_q_c #1536
         n = self.num_heads *(self.d_q + self.d_r) // self.tp
         print(f'm={m}, k={k}, n={n}')
@@ -139,8 +137,7 @@ class DeepSeekAtten(torch.nn.Module):
             deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
-    def _q_bmm(self):
-        m = self.batch_size  
+    def _q_bmm(self, m):
         b = self.num_heads //self.tp
         k = self.d_q
         n = self.d_kv_c #512
@@ -171,53 +168,73 @@ class DeepSeekAtten(torch.nn.Module):
         torch.manual_seed(0)
         random.seed(0)
 
-        b = self.batch_size
-        s_q = 1 #MTP的个数
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            b = self.batch_size
+            s_q = 1
+            mean_sk = 5000 # TODO not a good solution.
+        elif phase == InferencePhase.PREFILL.value:
+            b = 1
+            s_q = self.args.seq_length
+            mean_sk = self.args.seq_length
         h_q = self.num_heads //self.tp
         d = self.d_kv_c + self.d_r
         q = torch.randn(b, s_q, h_q, d)
-        mean_sk = 5000
         h_kv = 1
-        #From DeepSeek-simulator
-        cache_seqlens = torch.full((b,), mean_sk, dtype=torch.int32)
-        for i in range(b):
-            cache_seqlens[i] = max(
-                random.normalvariate(mean_sk, mean_sk / 2), s_q)
-        # total_seqlens = cache_seqlens.sum().item()
-        # mean_seqlens = cache_seqlens.float().mean().int().item()
-        max_seqlen = cache_seqlens.max().item()
-        max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
-        block_size = 64
 
-        block_table = torch.arange(
-            b * max_seqlen_pad // block_size, dtype=torch.int32
-            ).view(b, max_seqlen_pad // block_size)
-        blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d)
-        for i in range(b):
-            blocked_k.view(b, max_seqlen_pad, h_kv, d)[i, cache_seqlens[i].item():] = (
-                float("nan")
-            )
-        # blocked_v = blocked_k[..., :self.d_kv_c]
-        
-        tile_scheduler_metadata, num_splits = get_mla_metadata(
-            cache_seqlens, s_q * h_q // h_kv, h_kv
-        )
-        
-        def flash_mla():
-              return flash_mla_with_kvcache(
-                q,
-                blocked_k,
-                block_table,
-                cache_seqlens,
-                self.d_kv_c,
-                tile_scheduler_metadata,
-                num_splits,
-                causal=True,
+        if phase == InferencePhase.DECODE.value:
+            #From DeepSeek-simulator
+            cache_seqlens = torch.full((b,), mean_sk, dtype=torch.int32)
+            for i in range(b):
+                cache_seqlens[i] = max(
+                    random.normalvariate(mean_sk, mean_sk / 2), s_q)
+            # total_seqlens = cache_seqlens.sum().item()
+            # mean_seqlens = cache_seqlens.float().mean().int().item()
+            max_seqlen = cache_seqlens.max().item()
+            max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
+            block_size = 64
+
+            block_table = torch.arange(
+                b * max_seqlen_pad // block_size, dtype=torch.int32
+                ).view(b, max_seqlen_pad // block_size)
+            blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d)
+            for i in range(b):
+                blocked_k.view(b, max_seqlen_pad, h_kv, d)[i, cache_seqlens[i].item():] = (
+                    float("nan")
                 )
-        t = triton.testing.do_bench(flash_mla)
-        return t
-    def _O_bmm(self):
-        m = self.batch_size  
+            # blocked_v = blocked_k[..., :self.d_kv_c]
+            
+            tile_scheduler_metadata, num_splits = get_mla_metadata(
+                cache_seqlens, s_q * h_q // h_kv, h_kv
+            )
+            
+            def flash_mla():
+                return flash_mla_with_kvcache(
+                    q,
+                    blocked_k,
+                    block_table,
+                    cache_seqlens,
+                    self.d_kv_c,
+                    tile_scheduler_metadata,
+                    num_splits,
+                    causal=True,
+                    )
+            t = triton.testing.do_bench(flash_mla)
+            return t
+        elif phase == InferencePhase.PREFILL.value:
+            # from https://github.com/deepseek-ai/FlashMLA/blob/main/tests/test_flash_mla_prefill.py
+            s_kv = max(s_q,4096) #TODO
+            topk = 2048 #TODO
+
+            kv = torch.randn(b, s_kv, h_kv, d)
+            indices = torch.full((b, s_q, h_kv, topk), s_kv, dtype=torch.int32)
+            sm_scale = 1 / math.sqrt(d)
+            def flash_mla():
+                return flash_mla_sparse_fwd(q.squeeze(0), kv.squeeze(0), indices.squeeze(0), sm_scale)
+            t = triton.testing.do_bench(flash_mla)
+            return t
+
+    def _O_bmm(self, m):
         b = self.num_heads //self.tp
         k = self.d_kv_c #512
         n = self.d_kv #128
@@ -240,8 +257,7 @@ class DeepSeekAtten(torch.nn.Module):
                 t = bench_kineto(test_func, "nvjet_tst", suppress_kineto_output=True)
         return t
 
-    def _O_proj(self):
-        m = self.batch_size
+    def _O_proj(self, m):
         k = self.num_heads * self.d_kv //self.tp
         n = self.hidden_size
         print(f'm={m}, k={k}, n={n}')
@@ -256,17 +272,22 @@ class DeepSeekAtten(torch.nn.Module):
         return t
          
     def forward(self):
-        qkv_compression_time = self._qkv_compression()
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.batch_size
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+        qkv_compression_time = self._qkv_compression(m)
         print("matrix 1 is:" , qkv_compression_time*1e6)
-        q_uncrompression_time = self._q_uncrompression()
+        q_uncrompression_time = self._q_uncrompression(m)
         print("matrix 2 is:" , q_uncrompression_time*1e6)
-        q_bemm = self._q_bmm()
+        q_bemm = self._q_bmm(m)
         print("matrix 3 is:" , q_bemm*1e6)
         atten_qkv = qkv_compression_time + q_uncrompression_time + q_bemm
         atten_core = self._attention()
-        linear_bmm = self._O_bmm()
+        linear_bmm = self._O_bmm(m)
         print("matrix 9 is:" , linear_bmm*1e6)
-        linear_proj = self._O_proj()
+        linear_proj = self._O_proj(m)
         print("matrix 4 is:" , linear_proj*1e6)
         atten_linear = linear_bmm + linear_proj
         
@@ -281,10 +302,10 @@ class DeepSeekMLP(torch.nn.Module):
         self.batch_size = args.micro_batch
         self.hidden_size = args.hidden_size
         self.expert_dim = args.expert_dim
-        
+        self.seq_length = args.seq_length
+        self.args = args
     
-    def _up_gate(self):
-        m = self.batch_size  
+    def _up_gate(self, m):
         k = self.hidden_size #7168
         n = self.expert_dim * 2   #不开TP
         print(f'm={m}, k={k}, n={n}')
@@ -298,8 +319,7 @@ class DeepSeekMLP(torch.nn.Module):
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
-    def _down(self):
-        m = self.batch_size  
+    def _down(self, m):
         k = self.expert_dim  #不开TP
         n = self.hidden_size
         print(f'm={m}, k={k}, n={n}')
@@ -314,9 +334,14 @@ class DeepSeekMLP(torch.nn.Module):
         return t
 
     def forward(self):
-        up_gate = self._up_gate()
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.batch_size
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.seq_length
+        up_gate = self._up_gate(m)
         print("MLP:UP: ", up_gate*1e6)
-        down = self._down()
+        down = self._down(m)
         print("MLP:DOWN: ", down*1e6)
         return up_gate , down
 
@@ -330,11 +355,13 @@ class DeepSeekMOE(torch.nn.Module):
         self.ep = args.expert_model_parallel_size
         self.tp = args.tensor_model_parallel_size
         self.topk = args.moe_router_topk
+        self.seq_length = args.seq_length
+        self.args = args
     
-    def _up_gate(self):
-        num_groups = self.num_experts //self.ep  #一个GPU上有几个Expert
-        dp = self.ep//self.tp
-        m_per_group = dp * self.batch_size * self.topk //self.num_experts #一个expert上有几个token
+    def _up_gate(self, m):
+        num_groups = self.num_experts // self.ep
+        dp = self.args.world_size // self.tp
+        m_per_group = max(dp * m * self.topk //self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
         m_per_group = 2**math.ceil(math.log2(m_per_group))
         n = self.expert_dim * 2
         k = self.hidden_size
@@ -382,12 +409,11 @@ class DeepSeekMOE(torch.nn.Module):
         
         return t
     
-    def _down(self):
-        num_groups = self.num_experts //self.ep  #一个GPU上有几个Expert
-        dp = self.ep//self.tp
-        m_per_group = dp * self.batch_size * self.topk //self.num_experts #一个expert上有几个token
+    def _down(self, m):
+        num_groups = self.num_experts // self.ep
+        dp = self.args.world_size // self.tp
+        m_per_group = max(dp * m * self.topk //self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
         m_per_group = 2**math.ceil(math.log2(m_per_group))
-        print("m_per_group:", m_per_group)
         n = self.hidden_size
         k = self.expert_dim
         masked_m_candidates = list(filter(
@@ -409,8 +435,13 @@ class DeepSeekMOE(torch.nn.Module):
         return t
 
     def forward(self):
-        up_gate = self._up_gate()
-        down = self._down()
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.batch_size
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+        up_gate = self._up_gate(m)
+        down = self._down(m)
 
         return up_gate, down
 
@@ -426,13 +457,14 @@ class DeepSeekModel(torch.nn.Module):
         self.Attention = DeepSeekAtten(self.args)
         self.MLP = DeepSeekMLP(self.args)
         self.MOE = DeepSeekMOE(self.args)
+        self.aiob_forward_loops = getattr(args, "aiob_forward_loops", 10)
 
 
     def forward(self):
         # Emb_output, Emb_time = self.Embedding(input)
         # print("Embedding time: ", Emb_time)
         # self.time_list.setdefault("Emb", []).append({"time_gpu": Emb_time})
-        for i in range(self.args.num_layers):
+        for i in range(self.aiob_forward_loops):
             # norm_output, norm_time1 = self.RMSNorm(Emb_output)
             # self.time_list.setdefault("RMSNorm1", []).append(
             #         {"time_gpu": norm_time1}
@@ -464,16 +496,15 @@ class DeepSeekModel(torch.nn.Module):
             )
             print(f'mlp_time time: , {mlp_up * 1e6}')
             print(f'mlp_down time: , {mlp_down * 1e6}')
-            if i >= self.args.dense_layer:
-                up_gate_moe, down_moe = self.MOE()
-                self.time_list.setdefault("moe_up_gate", []).append(
-                        {"time_gpu": up_gate_moe* 1e6}
-                    )
-                self.time_list.setdefault("moe_down", []).append(
-                        {"time_gpu": down_moe* 1e6}
-                    )
-                print(f'up_gate_moe time: , {up_gate_moe * 1e6}')  
-                print(f'down_moe time: , {down_moe * 1e6}')  
+            up_gate_moe, down_moe = self.MOE()
+            self.time_list.setdefault("moe_up_gate", []).append(
+                    {"time_gpu": up_gate_moe* 1e6}
+                )
+            self.time_list.setdefault("moe_down", []).append(
+                    {"time_gpu": down_moe* 1e6}
+                )
+            print(f'up_gate_moe time: , {up_gate_moe * 1e6}')  
+            print(f'down_moe time: , {down_moe * 1e6}')  
         print(self.time_list)
         result_dir = "./results/aiob_outputs"
         if not os.path.isdir(result_dir):

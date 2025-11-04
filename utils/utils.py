@@ -286,6 +286,8 @@ def get_comp_out(args):
     
 
 def extract_inference_averages(file_path,args):
+    if file_path is None or file_path == "":
+        return {}
     attention_norm_avg_sum = 0.0
     attention_gdn_avg_sum = 0.0
     attention_avg_sum = 0.0
@@ -298,33 +300,32 @@ def extract_inference_averages(file_path,args):
     time_gpu_avg_re = re.compile(r"time_gpu_avg:\s+(\d+(\.\d+)?)")
     # time_gpu_min_re = re.compile(r"time_gpu_min:\s+(\d+(\.\d+)?)")
 
-    if args.aiob_enable:
-        with open(file_path, "r") as file:
-            current_section = None
+    with open(file_path, "r") as file:
+        current_section = None
 
-            for line in file:
-                header_match = section_header_re.match(line)
-                if header_match:
-                    current_section = header_match.group(1).strip()
+        for line in file:
+            header_match = section_header_re.match(line)
+            if header_match:
+                current_section = header_match.group(1).strip()
 
-                avg_match = time_gpu_avg_re.search(line)
-                # min_match = time_gpu_min_re.search(line)
-                if avg_match and current_section:
-                    avg_value = float(avg_match.group(1)) * 1000
-                    if "atten_norm" in current_section:
-                        attention_norm_avg_sum += avg_value
-                    elif "gdn" in current_section:
-                        attention_gdn_avg_sum += avg_value
-                    elif "atten" in current_section:
-                        attention_avg_sum += avg_value
-                    elif "mlp" in current_section:
-                        mlp_avg_sum += avg_value
-                    elif "moe_norm" in current_section:
-                        moe_norm_avg_sum += avg_value
-                    elif "moe_route" in current_section:
-                        moe_route_avg_sum += avg_value
-                    elif "moe" in current_section:
-                        moe_expert_sum += avg_value
+            avg_match = time_gpu_avg_re.search(line)
+            # min_match = time_gpu_min_re.search(line)
+            if avg_match and current_section:
+                avg_value = float(avg_match.group(1)) * 1000
+                if "atten_norm" in current_section:
+                    attention_norm_avg_sum += avg_value
+                elif "gdn" in current_section:
+                    attention_gdn_avg_sum += avg_value
+                elif "atten" in current_section:
+                    attention_avg_sum += avg_value
+                elif "mlp" in current_section:
+                    mlp_avg_sum += avg_value
+                elif "moe_norm" in current_section:
+                    moe_norm_avg_sum += avg_value
+                elif "moe_route" in current_section:
+                    moe_route_avg_sum += avg_value
+                elif "moe" in current_section:
+                    moe_expert_sum += avg_value
 
     full_cache = {
         "attention_norm": round(attention_norm_avg_sum),
@@ -344,14 +345,15 @@ def get_compute_path(args):
     result_dir = "./results/aiob_outputs"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp1-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}.txt"
+    phase = args.phase
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp1-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}-{phase}.txt"
     filepath = os.path.join(result_dir, filename)
     return filepath
 
 def write_time(time_list, args):
     filepath = get_compute_path(args)
     with open(filepath, "w") as file:
-        file.write("inference_term:decode\n")
+        file.write(f"inference_term:{args.phase}\n")
         data_str = json.dumps(time_list, indent=4)
 
         file.write(data_str)

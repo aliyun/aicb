@@ -1,5 +1,5 @@
 from utils.utils import divide, CommType, CommGroup
-from workload_generator.mocked_model.MockedModel import MockedModel, Linear, MockedParam
+from workload_generator.mocked_model.MockedModel import MockedModel, Linear, MockedParam, MockedParamsBase
 from log_analyzer.log import Workload, LogItem
 #TODO support Workload
 
@@ -60,49 +60,14 @@ class Qwen3MoeModel(MockedModel):
         ]
         # print(config)
 
-class Qwen3MoeParams():
-    def __init__(self, config_file=None):
-        # Default values
-        self.aiob_enable: bool = True
-        self.model_name: str = "Qwen3-Moe-235B"
-        self.frame: str = "Qwen3-Moe"
+class Qwen3MoeParams(MockedParamsBase):
+    def __init__(self, config_file=None, args=None):
+        # Initialize base class with default values
+        super().__init__("Qwen3-Moe-235B", "Qwen3-Moe", config_file, args)
 
-        # Input Params：
-        self.seq_length: int = 1  # decode
-        self.micro_batch: int = 64  # for example
-        self.world_size: int = 32  # Total 32 gpus
-        self.tensor_model_parallel_size: int = 1
-        self.expert_model_parallel_size: int = 32
-        self.pipeline_model_parallel: int = 1
-        
-        self.moe_enable = True
-
-        self.result_dir = "results/workload/"
-
-        # Load from config file if provided
-        if config_file:
-            self.load_from_config(config_file)
-
-    def load_from_config(self, config_file):
-        import json
-        try:
-            with open(config_file, 'r') as f:
-                config_data = json.load(f)
-            
-            # Update attributes with values from config file
-            for key, value in config_data.items():
-                # print(key,value)
-                # if hasattr(self, key):
-                setattr(self, key, value)
-            
-            # Recalculate total_experts if needed
-            if 'router_expert' in config_data or 'duped_expert' in config_data:
-                self.total_experts = self.router_expert + self.duped_expert
-                
-        except FileNotFoundError:
-            print(f"Config file {config_file} not found. Using default values.")
-        except json.JSONDecodeError:
-            print(f"Error decoding JSON from {config_file}. Using default values.")
+        # Recalculate total_experts if needed
+        if hasattr(self, 'router_expert') or hasattr(self, 'duped_expert'):
+            self.num_experts = self.router_expert + self.duped_expert
 
 
 if __name__ == "__main__":

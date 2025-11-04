@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Config Generator for AICB Inference Workloads
+
+This script generates batch execution scripts for different argument combinations.
+"""
+
 import json
 import os
 import argparse
@@ -5,6 +12,7 @@ import itertools
 import re
 from pathlib import Path
 from datetime import datetime
+
 
 def parse_value(s: str):
     """Try to parse a string into an integer, float, or return the original string."""
@@ -21,13 +29,14 @@ def parse_value(s: str):
                 return s[1:-1]
             return s
 
+
 def parse_value_range(value_str: str) -> list:
     """
     Parse the value string, supporting lists, ranges, and ranges with steps.
-    - "[1,2,4,8]" -> [1, 2, 4, 8]
-    - "[2-10]" -> [2, 3, 4, 5, 6, 7, 8, 9, 10]
-    - "[2-10:2]" -> [2, 4, 6, 8, 10]
-    - "value" -> ["value"]
+    - [1,2,4,8] -> [1, 2, 4, 8]
+    - [2-10] -> [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    - [2-10:2] -> [2, 4, 6, 8, 10]
+    - value -> ["value"]
     """
     value_str = value_str.strip()
     if not (value_str.startswith('[') and value_str.endswith(']')):
@@ -50,106 +59,216 @@ def parse_value_range(value_str: str) -> list:
     # Default comma-separated list
     return [parse_value(x) for x in inner_str.split(',')]
 
-def main():
-    """Main function to parse arguments, generate config files and scripts."""
-    parser = argparse.ArgumentParser(
-        description="Generate JSON config files and execution scripts based on given parameter combinations.",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
-    parser.add_argument(
-        '-f', '--json_file',
-        type=str,
-        required=True,
-        help="Path to the base JSON config file."
-    )
-    parser.add_argument(
-        '-m', '--model_name',
-        type=str,
-        required=True,
-        help="Model name, used for creating output folders and in shell commands."
-    )
-    parser.add_argument(
-        '-u', '--update',
-        nargs=2,
-        action='append',
-        metavar=('KEY', 'VALUES'),
-        required=True,
-        help="""Attributes and their values to modify. Values can be a series in the following formats:
-  - List: --update seq_length "[1,2,4,8]"
-  - Range: --update world_size "[2-8]"
-  - Range with step: --update micro_batch "[2-10:2]"
-This parameter can be used multiple times to modify multiple attributes."""
-    )
-    args = parser.parse_args()
 
-    # Read the base JSON file
-    try:
-        with open(args.json_file, 'r', encoding='utf-8') as f:
-            base_data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Input file '{args.json_file}' not found")
-        return
-    except json.JSONDecodeError:
-        print(f"Error: File '{args.json_file}' is not valid JSON.")
-        return
-
+def generate_shell_script(model_name, combinations, update_args, flag_args, base_config_path=None):
+    """Generate shell script with different command-line arguments."""
     # Create output directory
     root_out = Path("generated_configs")
-    output_dir = root_out / args.model_name
-    output_dir.mkdir(exist_ok=True)
-
-    # Parse parameters to update
-    update_params = {key: parse_value_range(val_str) for key, val_str in args.update}
-    param_names = list(update_params.keys())
-    param_values_lists = list(update_params.values())
-
-    # Generate Cartesian product of all parameter values
-    combinations = list(itertools.product(*param_values_lists))
+    output_dir = root_out / model_name
+    output_dir.mkdir(exist_ok=True, parents=True)
 
     shell_commands = []
-    
+    filename_parts = {}
+
+    origin_command = f"sh ./scripts/inference_workload_with_aiob.sh -m {model_name}"
+    for arg_name, flag_name in flag_args.items():
+        origin_command += f" {flag_name}"
+
     # Iterate through all combinations
     for combo in combinations:
-        new_data = base_data.copy()
-        filename_parts = []
-        
-        # Update JSON data and construct filename
-        for i, param_name in enumerate(param_names):
-            value = combo[i]
-            # Support nested keys, e.g. a.b.c
-            keys = param_name.split('.')
-            d = new_data
-            for key in keys[:-1]:
-                d = d.setdefault(key, {})
-            d[keys[-1]] = value
-            filename_parts.append(f"{param_name}_{value}")
-            
-        # Generate JSON filename and path
-        output_filename_base = "-".join(filename_parts) + ".json"
-        output_json_path = output_dir / output_filename_base
-
-        # Write new JSON file
-        with open(output_json_path, 'w', encoding='utf-8') as f:
-            json.dump(new_data, f, indent=2)
-
         # Build shell command
-        abs_config_path = Path.cwd() / output_json_path
-        command = f"sh ./scripts/inference_workload_with_aiob.sh -m {args.model_name} -c {abs_config_path}"
+        command = origin_command
+        
+        # Add config file if provided
+        if base_config_path:
+            abs_config_path = Path.cwd() / base_config_path
+            command += f" -c {abs_config_path}"
+        
+        # Add command-line arguments
+        for i, (arg_name, _) in enumerate(update_args):
+            value = combo[i]
+            # Convert argument name to command-line format
+            # e.g., seq_length -> -s, micro_batch -> -b, etc.
+            arg_flag, arg_type = get_arg_flag(arg_name)
+            if arg_type == "not_found":
+                print(f"Warning: Argument '{arg_name}' not found in the model config. Use '{arg_name}' instead.")
+            command += f" {arg_flag} {value}"
+            if arg_name not in filename_parts:
+                filename_parts[arg_name] = set()
+            filename_parts[arg_name].add(value)
+            
         shell_commands.append(command)
-
-    # Generate shell script with timestamp in filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    shell_script_path = output_dir / f"run_all_{timestamp}.sh"
+    # print(filename_parts)
+    # # Generate descriptive filename based on modified arguments and their values
+    # filename_parts = []
+    # for arg_name, arg_values in update_args:
+    #     # For single values, use the value directly
+    #     if len(arg_values) == 1:
+    #         filename_parts.append(f"{arg_name}_{arg_values[0]}")
+    #     else:
+    #         # For multiple values, use the first and last values
+    #         filename_parts.append(f"{arg_name}_{arg_values[0]}_to_{arg_values[-1]}")
+    
+    # filename_descriptor = "_".join(filename_parts)
+    filename_descriptor = ""
+    for arg_name, flag_name in flag_args.items():
+        filename_descriptor += f"_{arg_name}"
+    for arg_name, arg_values in filename_parts.items():
+        arg_values_list = list(arg_values)
+        arg_values_list.sort()
+        if len(arg_values_list) == 1:
+            filename_descriptor += f"_{arg_name}_{arg_values_list[0]}"
+        else:
+            filename_descriptor += f"_{arg_name}_{arg_values_list[0]}_to_{arg_values_list[-1]}"
+    shell_script_path = output_dir / f"run_all{filename_descriptor}.sh"
+    
     with open(shell_script_path, 'w', encoding='utf-8') as f:
         f.write("#!/bin/bash\n\n")
-        f.write(f"# Script generated by generate_configs.py at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write("\n".join(shell_commands) + "\n")
+        f.write(f"# Script generated by config_gen.py at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("# This script runs inference workloads with different argument combinations\n\n")
+        f.write("set -e  # Exit on any error\n\n")
+        f.write("# Run all commands\n")
+        for i, command in enumerate(shell_commands, 1):
+            f.write(f"echo \"Running command {i}/{len(shell_commands)}: {command}\"\n")
+            f.write(f"{command}\n")
+            f.write("echo \"----------------------------------------\"\n\n")
     
     # Make shell script executable
     os.chmod(shell_script_path, 0o755)
 
-    print(f"Successfully generated {len(combinations)} config files and 'run_all_{timestamp}.sh' script.")
+    print(f"Successfully generated 'run_all{filename_descriptor}.sh' script with {len(combinations)} commands.")
     print(f"Output directory: ./{output_dir}/")
+    print(f"Script path: ./{shell_script_path}")
+    
+    return shell_script_path
+
+
+def get_arg_flag(arg_name):
+    """Convert argument name to command-line flag."""
+    arg_mapping = {
+        'seq_length': '-s',
+        'micro_batch': '-b',
+        'world_size': '-w',
+        'tensor_model_parallel_size': '-t',
+        'expert_model_parallel_size': '-e',
+        'pipeline_model_parallel': '-l',
+        'phase': '-p',
+        'result_dir': '-r',
+        'aiob_forward_loops': '-f',
+    }
+
+    arg_bool_mapping = {
+        'aiob_enable': '-a',
+        'moe_enable': '-M'
+    }
+    
+    # For boolean flags, we just return the flag without a value
+    if arg_name in arg_bool_mapping:
+        return arg_bool_mapping[arg_name], "flag"
+    
+    if arg_name in arg_mapping:
+        return arg_mapping[arg_name], "value"
+    return f"--{arg_name}", "not_found"
+
+
+def main():
+    """Main function to parse arguments and generate batch execution scripts."""
+    parser = argparse.ArgumentParser(
+        description="Generate batch execution scripts for AICB inference workloads.\n"
+                    "This tool generates shell scripts with different command-line argument combinations.",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    
+    parser.add_argument(
+        '-m', '--model_name',
+        type=str,
+        required=True,
+        help="Model name, used for creating output folders and in shell commands.\n"
+             "Examples: deepseek-671B, qwen3-235B, qwen3-next-80B"
+    )
+    
+    parser.add_argument(
+        '-c', '--config_file',
+        type=str,
+        help="Path to the base JSON config file (optional)."
+    )
+    
+    parser.add_argument(
+        '-u', '--update',
+        nargs=2,
+        action='append',
+        metavar=('ARG_NAME', 'VALUES'),
+        required=True,
+        help="""Command-line arguments and their values to vary. Values can be in these formats:
+  - List: --update seq_length [1,2,4,8]
+  - Range: --update world_size [2-8]
+  - Range with step: --update micro_batch [2-10:2]
+  - Single value: --update phase decode
+This parameter can be used multiple times to vary multiple arguments."""
+    )
+    
+    parser.add_argument(
+        '--aiob_enable',
+        action='store_true',
+        help="Enable AIOB for all generated commands (adds -a flag)."
+    )
+    
+    parser.add_argument(
+        '--moe_enable',
+        action='store_true',
+        help="""Enable MoE for all generated commands (adds -M flag).
+
+Examples:
+  python config_gen.py -m deepseek-671B -u seq_length [1024,2048,4096] -u micro_batch [1,2,4]
+  python config_gen.py -m qwen3-235B -u world_size [2-8:2] -u phase [prefill,decode] --aiob_enable
+  python config_gen.py -m qwen3-next-80B -c config.json -u seq_length [512-4096:512] -u micro_batch [1-8] --aiob_enable"""
+    )
+    
+    args = parser.parse_args()
+
+    # Validate config file if provided
+    if args.config_file:
+        try:
+            with open(args.config_file, 'r', encoding='utf-8') as f:
+                json.load(f)
+        except FileNotFoundError:
+            print(f"Error: Config file '{args.config_file}' not found")
+            return
+        except json.JSONDecodeError:
+            print(f"Error: Config file '{args.config_file}' is not valid JSON.")
+            return
+
+    # Parse parameters to update
+    update_args = [(arg_name, parse_value_range(val_str)) for arg_name, val_str in args.update]
+    arg_names = [arg[0] for arg in update_args]
+    arg_values_lists = [arg[1] for arg in update_args]
+
+    arg_bool_flags = {}
+    for attr in args.__dict__:
+        flag, flag_type = get_arg_flag(attr)
+        if flag_type == "flag":
+            arg_bool_flags[attr] = flag
+    # Generate Cartesian product of all argument values
+    combinations = list(itertools.product(*arg_values_lists))
+    # Generate shell script
+    script_path = generate_shell_script(
+        args.model_name, 
+        combinations, 
+        args.update,
+        arg_bool_flags, 
+        args.config_file
+    )
+    
+    # Additional options
+    if args.aiob_enable or args.moe_enable:
+        print("\nAdditional options:")
+        if args.aiob_enable:
+            print("  - AIOB enabled for all commands")
+        if args.moe_enable:
+            print("  - MoE enabled for all commands")
+
+    print(f"\nTo execute all commands, run:")
+    print(f"  sh ./{script_path}")
 
 
 if __name__ == '__main__':
