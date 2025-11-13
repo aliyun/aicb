@@ -172,7 +172,7 @@ class DeepSeekAtten(torch.nn.Module):
         if phase == InferencePhase.DECODE.value:
             b = self.batch_size
             s_q = 1
-            mean_sk = 5000 # TODO not a good solution.
+            mean_sk = self.args.seq_length + 1 # TODO not a good solution.
         elif phase == InferencePhase.PREFILL.value:
             b = 1
             s_q = self.args.seq_length
@@ -351,7 +351,7 @@ class DeepSeekMOE(torch.nn.Module):
         self.batch_size = args.micro_batch
         self.hidden_size = args.hidden_size
         self.expert_dim = args.expert_dim
-        self.num_experts = args.num_experts
+        self.num_experts = args.router_expert + args.shared_experts
         self.ep = args.expert_model_parallel_size
         self.tp = args.tensor_model_parallel_size
         self.topk = args.moe_router_topk
@@ -360,79 +360,47 @@ class DeepSeekMOE(torch.nn.Module):
     
     def _up_gate(self, m):
         num_groups = self.num_experts // self.ep
-        dp = self.args.world_size // self.tp
-        m_per_group = max(dp * m * self.topk //self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
-        m_per_group = 2**math.ceil(math.log2(m_per_group))
+        expected_m_per_group, ratio = get_ep_expected_m_per_group(
+            m, num_groups, self.topk
+        )
+
         n = self.expert_dim * 2
         k = self.hidden_size
 
-        masked_m_candidates = list(filter(
-                    lambda candidate: candidate <= m_per_group,
-                    (4, 8, 16, 32, 64, 128, 192, 256, 320, 384)
-                ))
-
-                # Correctness testing
-        # for i in range(10):
-        #     x_fp8, y_fp8, out, ref_out = construct_grouped(
-        #                 num_groups, m_per_group, k, n, is_masked=True
-        #             )
-        #     masked_m = torch.empty(
-        #                 (num_groups,), device='cuda', dtype=torch.int)
-        #     for j in range(num_groups):
-        #         masked_m[j] = random.choice(masked_m_candidates)
-        #         expected_m = min(
-        #                 int(masked_m.float().mean()) + 1, m_per_group)
-        #         deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-        #                 x_fp8, y_fp8, out, masked_m, expected_m
-        #             )
-
-        #     for j in range(num_groups):
-        #         diff = calc_diff(
-        #                     out[j, :masked_m[j].item()],
-        #                     ref_out[j, :masked_m[j].item()]
-        #                 )
-        #         assert diff < 0.001, (
-        #                     f'{m_per_group=}, {k=}, {n=}, {j=}, '
-        #                     f'masked_m={masked_m[j]}, {num_groups=}, {diff:.5f}'
-        #                 )
-
         def test_func():
-                    x_fp8, y_fp8, out, ref_out = construct_grouped(
-                        num_groups, m_per_group, k, n, is_masked=True
-                    )
-                    masked_m = torch.ones(
-                        (num_groups,), device='cuda:0', dtype=torch.int) * m_per_group
-                    deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                        x_fp8, y_fp8, out, masked_m, m_per_group
-                    )
+            x_fp8, y_fp8, out, ref_out = construct_grouped(
+                num_groups, expected_m_per_group, k, n, is_masked=True
+            )
+            masked_m = torch.ones(
+                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.5, 1.5))
+            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
+                x_fp8, y_fp8, out, masked_m, expected_m_per_group
+            )
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
-        return t
+        return t * ratio
     
     def _down(self, m):
         num_groups = self.num_experts // self.ep
-        dp = self.args.world_size // self.tp
-        m_per_group = max(dp * m * self.topk //self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
-        m_per_group = 2**math.ceil(math.log2(m_per_group))
+        expected_m_per_group, ratio = get_ep_expected_m_per_group(
+            m, num_groups, self.topk
+        )
+
         n = self.hidden_size
         k = self.expert_dim
-        masked_m_candidates = list(filter(
-                    lambda candidate: candidate <= m_per_group,
-                    (4, 8, 16, 32, 64, 128, 192, 256, 320, 384)
-                ))
 
         def test_func():
                     x_fp8, y_fp8, out, ref_out = construct_grouped(
-                        num_groups, m_per_group, k, n, is_masked=True
+                        num_groups, expected_m_per_group, k, n, is_masked=True
                     )
                     masked_m = torch.ones(
-                        (num_groups,), device='cuda:0', dtype=torch.int) * m_per_group
+                        (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.5, 1.5))
                     deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                        x_fp8, y_fp8, out, masked_m, m_per_group
+                        x_fp8, y_fp8, out, masked_m, expected_m_per_group
                     )
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
-        return t
+        return t * ratio
 
     def forward(self):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)

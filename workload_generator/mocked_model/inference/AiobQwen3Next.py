@@ -198,7 +198,6 @@ class Qwen3NextGatedDeltaNet(torch.nn.Module):
         h0 = torch.randn(B, HV, K, V, device='cuda', dtype=torch.bfloat16).contiguous()
 
         ssm = torch.zeros(B*T, device='cuda', dtype=torch.int32).contiguous()
-        # ssm = None
 
         # print('q', q.shape, q.stride())
         # print('k', k.shape, k.stride())
@@ -512,17 +511,14 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
                             gating_output=router_logits,
                             topk=self.topk,
                             renormalize=True)
-        kernel_names = ('moe::topkGatingSoftmax',
-                        'at::native::unrolled_elementwise_kernel',
-                        'at::native::reduce_kernel',
-                        'at::native::elementwise_kernel'
-                        )
-        t = sum(bench_kineto(test_func, kernel_names, suppress_kineto_output=True))
+        t = bench_kineto(test_func, 'moe::topkGatingSoftmax', suppress_kineto_output=True)
         return t
 
     def _moe_gate_proj(self, up_or_down, m):
-        num_groups=self.num_experts // self.ep
-        total = max(m * (self.args.world_size // self.tp) * self.topk // self.num_experts,4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
+        num_groups = self.num_experts // self.ep
+        expected_m_per_group, ratio = get_ep_expected_m_per_group(
+            m, num_groups, self.topk
+        )
         if up_or_down:
             n = 2 * self.args.moe_intermediate_size
             k = self.hidden_size
@@ -532,16 +528,16 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
 
         def test_func():
             x_fp8, y_fp8, out, ref_out = construct_grouped(
-                            num_groups, total, k, n, is_masked=True
+                            num_groups, expected_m_per_group, k, n, is_masked=True
                         )
             masked_m = torch.ones(
-                        (num_groups,), device='cuda:0', dtype=torch.int) * total
+                        (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.5, 1.5))
             deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                        x_fp8, y_fp8, out, masked_m, total
+                        x_fp8, y_fp8, out, masked_m, expected_m_per_group
                     )
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
 
-        return t
+        return t * ratio
 
     def _moe_act(self, m):
         # SiluAndMul
@@ -561,16 +557,29 @@ class Qwen3NextSparseMoeBlock(torch.nn.Module):
             torch.ops._C.silu_and_mul(
                 intermediate_cache2.unflatten(0, (num_groups, total_max)),
                 intermediate_cache1.unflatten(0, (num_groups, total_max)))
-        # vllm::silu vllm::act_and_mul
-        t = bench_kineto(test_func, "vllm::silu", suppress_kineto_output=True)
-        return t
+            
+
+        candidates = [
+            "vllm::silu",
+            "vectorized_elementwise_kernel",
+        ]
+        last_err = None
+        for names in candidates:
+            try:
+                res = bench_kineto(test_func, names, suppress_kineto_output=True)
+                return sum(res) if isinstance(res, (list, tuple)) else float(res)
+            except Exception as e:
+                last_err = e
+                continue
+
+        raise RuntimeError(f"bench_kineto failed for all candidates: {last_err}")
 
 
     def forward(self):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
         if phase == InferencePhase.DECODE.value:
             m = self.args.micro_batch
-            total_tokens = m * 1024 # TODO: maybe should set output seq_length
+            total_tokens = m  # TODO: maybe should set output seq_length
         elif phase == InferencePhase.PREFILL.value:
             m = self.args.seq_length
             total_tokens = m
