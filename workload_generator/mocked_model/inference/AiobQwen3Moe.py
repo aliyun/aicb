@@ -297,7 +297,7 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
         return t
 
     def _moe_gate_proj(self, up_or_down, m):
-        num_groups = self.num_experts // self.ep
+        num_groups = self.num_experts // (self.ep // self.tp)
         expected_m_per_group, ratio = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )

@@ -351,7 +351,7 @@ class DeepSeekMOE(torch.nn.Module):
         self.batch_size = args.micro_batch
         self.hidden_size = args.hidden_size
         self.expert_dim = args.expert_dim
-        self.num_experts = args.router_expert + args.shared_experts
+        self.num_experts = args.router_expert
         self.ep = args.expert_model_parallel_size
         self.tp = args.tensor_model_parallel_size
         self.topk = args.moe_router_topk
@@ -359,7 +359,7 @@ class DeepSeekMOE(torch.nn.Module):
         self.args = args
     
     def _up_gate(self, m):
-        num_groups = self.num_experts // self.ep
+        num_groups = self.num_experts // (self.ep // self.tp)
         expected_m_per_group, ratio = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
@@ -381,7 +381,7 @@ class DeepSeekMOE(torch.nn.Module):
         return t * ratio
     
     def _down(self, m):
-        num_groups = self.num_experts // self.ep
+        num_groups = self.num_experts // (self.ep // self.tp)
         expected_m_per_group, ratio = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
