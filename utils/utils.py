@@ -894,7 +894,5 @@ def num_parameters_to_bytes(args, params: int) -> str:
 def get_ep_expected_m_per_group(m, num_groups, topk):
     expected_m_per_group_init = max(m * topk / num_groups, 1.0)
     expected_m_per_group = max(expected_m_per_group_init, 4) #XXX construct_grouped needs m_per_group to be a integer multiple of 4
-    ratio = math.sqrt(expected_m_per_group_init / expected_m_per_group) #XXX not a good way
     expected_m_per_group = 2**math.ceil(math.log2(expected_m_per_group)) # gemm needs expected_m_per_group to be power of 2
-    print(f"expected_m_per_group_init: {expected_m_per_group_init}, expected_m_per_group: {expected_m_per_group}, ratio: {ratio}")
-    return expected_m_per_group, ratio
+    return expected_m_per_group

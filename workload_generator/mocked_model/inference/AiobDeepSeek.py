@@ -360,47 +360,75 @@ class DeepSeekMOE(torch.nn.Module):
     
     def _up_gate(self, m):
         num_groups = self.num_experts // (self.ep // self.tp)
-        expected_m_per_group, ratio = get_ep_expected_m_per_group(
+        expected_m_per_group = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
 
         n = self.expert_dim * 2
         k = self.hidden_size
 
-        def test_func():
-            x_fp8, y_fp8, out, ref_out = construct_grouped(
-                num_groups, expected_m_per_group, k, n, is_masked=True
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+
+        def test_func_decode():
+            x_fp8, y_fp8, out, ref_out = construct_masked_grouped(
+                num_groups, expected_m_per_group, k, n
             )
             masked_m = torch.ones(
-                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.5, 1.5))
+                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.7, 1.3))
             deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
                 x_fp8, y_fp8, out, masked_m, expected_m_per_group
             )
+        def test_func_prefill():
+            m, x_fp8, y_fp8, m_indices, out, ref_out = construct_contiguous_grouped(
+                num_groups, expected_m_per_group, k, n
+            )
+            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
+                x_fp8, y_fp8, out, m_indices
+            )
+        
+        if phase == InferencePhase.DECODE.value:
+            test_func = test_func_decode
+        elif phase == InferencePhase.PREFILL.value:
+            test_func = test_func_prefill
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
-        return t * ratio
+        return t
     
     def _down(self, m):
         num_groups = self.num_experts // (self.ep // self.tp)
-        expected_m_per_group, ratio = get_ep_expected_m_per_group(
+        expected_m_per_group = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
 
         n = self.hidden_size
         k = self.expert_dim
 
-        def test_func():
-                    x_fp8, y_fp8, out, ref_out = construct_grouped(
-                        num_groups, expected_m_per_group, k, n, is_masked=True
-                    )
-                    masked_m = torch.ones(
-                        (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.5, 1.5))
-                    deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                        x_fp8, y_fp8, out, masked_m, expected_m_per_group
-                    )
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+
+        def test_func_decode():
+            x_fp8, y_fp8, out, ref_out = construct_masked_grouped(
+                num_groups, expected_m_per_group, k, n
+            )
+            masked_m = torch.ones(
+                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.7, 1.3))
+            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
+                x_fp8, y_fp8, out, masked_m, expected_m_per_group
+            )
+        def test_func_prefill():
+            m, x_fp8, y_fp8, m_indices, out, ref_out = construct_contiguous_grouped(
+                num_groups, expected_m_per_group, k, n
+            )
+            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
+                x_fp8, y_fp8, out, m_indices
+            )
+        
+        if phase == InferencePhase.DECODE.value:
+            test_func = test_func_decode
+        elif phase == InferencePhase.PREFILL.value:
+            test_func = test_func_prefill
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
-        return t * ratio
+        return t
 
     def forward(self):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)

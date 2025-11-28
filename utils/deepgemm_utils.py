@@ -1,8 +1,11 @@
 import torch
 from typing import Tuple
 import deep_gemm
+import random
 from deep_gemm import calc_diff, ceil_div, get_col_major_tma_aligned_tensor
+from deep_gemm.jit_kernels.utils import get_m_alignment_for_contiguous_layout
 
+#TODO update DeepGEMM to a newer version
 
 #From DeepGEMM
 def per_token_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -36,7 +39,37 @@ def construct(m: int, k: int, n: int) -> \
     x_fp8 = (x_fp8[0], get_col_major_tma_aligned_tensor(x_fp8[1]))
     return x_fp8, y_fp8, out, ref_out
 #From DeepGEMM
-def construct_grouped(num_groups: int, m: int, k: int, n: int, is_masked: bool) -> \
+def construct_contiguous_grouped(num_groups: int, expected_m_per_group: int, k: int, n: int) -> \
+        Tuple[int, Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+    m = 0
+    m_aligned = get_m_alignment_for_contiguous_layout()
+    group_m_list = []
+    for i in range(num_groups):
+        group_m = m_aligned * random.randint(int(expected_m_per_group * 0.7) // m_aligned, int(expected_m_per_group * 1.3) // m_aligned)
+        m += group_m
+        group_m_list.append(group_m)
+    x = torch.randn((m, k), device='cuda', dtype=torch.bfloat16)
+    y = torch.randn((num_groups, n, k), device='cuda', dtype=torch.bfloat16)    
+    m_indices = torch.empty(m, device='cuda', dtype=torch.int32)
+    out = torch.empty((m, n), device='cuda', dtype=torch.bfloat16)
+    ref_out = torch.randn((m, n), device='cuda', dtype=torch.bfloat16)
+
+    start = 0
+    for i, group_m in enumerate(group_m_list):
+        end = start + group_m
+        m_indices[start:end] = i
+        ref_out[start:end] = x[start:end] @ y[i].t()
+        start = end
+
+    assert m % 4 == 0, f'TMA alignment error: {m}'
+    x_fp8 = per_token_cast_to_fp8(x)
+    y_fp8 = (torch.empty_like(y, dtype=torch.float8_e4m3fn), torch.empty((num_groups, ceil_div(n, 128), k // 128), device='cuda', dtype=torch.float))
+    for i in range(num_groups):
+        y_fp8[0][i], y_fp8[1][i] = per_block_cast_to_fp8(y[i])
+
+    return m, x_fp8, y_fp8, m_indices, out, ref_out
+#From DeepGEMM
+def construct_masked_grouped(num_groups: int, m: int, k: int, n: int) -> \
         Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
     x = torch.randn((num_groups, m, k), device='cuda:0', dtype=torch.bfloat16)
     y = torch.randn((num_groups, n, k), device='cuda:0', dtype=torch.bfloat16)
@@ -47,15 +80,10 @@ def construct_grouped(num_groups: int, m: int, k: int, n: int, is_masked: bool) 
     x_fp8 = (torch.empty_like(x, dtype=torch.float8_e4m3fn), torch.empty(
         (num_groups, m, k // 128), device='cuda:0', dtype=torch.float))
     y_fp8 = (torch.empty_like(y, dtype=torch.float8_e4m3fn), torch.empty(
-        (num_groups, (n + 127) // 128, k // 128), device='cuda:0', dtype=torch.float))
+        (num_groups, ceil_div(n, 128), k // 128), device='cuda:0', dtype=torch.float))
     for i in range(num_groups):
         x_fp8[0][i], x_fp8[1][i] = per_token_cast_to_fp8(x[i])
         y_fp8[0][i], y_fp8[1][i] = per_block_cast_to_fp8(y[i])
-
-    # For non-masked input, we must merge the group and M dims
-    if not is_masked:
-        x_fp8 = (x_fp8[0].view(-1, k), per_token_cast_to_fp8(x.view(-1, k))[1])
-        out, ref_out = out.view(-1, n), ref_out.view(-1, n)
 
     # Transpose earlier so that the testing will not trigger transposing kernels
     x_fp8 = (x_fp8[0], get_col_major_tma_aligned_tensor(x_fp8[1]))
