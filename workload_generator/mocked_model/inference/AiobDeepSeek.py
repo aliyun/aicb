@@ -4,9 +4,7 @@ from workload_generator.mocked_model.MockedModel import InferencePhase
 from utils.utils import *
 from utils.deepgemm_utils import *
 import torch.nn.functional as F
-import deep_gemm
 import random
-from deep_gemm import bench_kineto, ceil_div, get_col_major_tma_aligned_tensor, calc_diff
 from typing import Tuple
 import triton
 import numpy as np
@@ -114,13 +112,15 @@ class DeepSeekAtten(torch.nn.Module):
         k = self.hidden_size #7168
         n = self.d_kv_c + self.d_q_c + self.d_r  #2112
         print(f'm={m}, k={k}, n={n}')
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-                deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
@@ -128,13 +128,15 @@ class DeepSeekAtten(torch.nn.Module):
         k = self.d_q_c #1536
         n = self.num_heads *(self.d_q + self.d_r) // self.tp
         print(f'm={m}, k={k}, n={n}')
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-            deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
     def _q_bmm(self, m):
@@ -261,13 +263,15 @@ class DeepSeekAtten(torch.nn.Module):
         k = self.num_heads * self.d_kv //self.tp
         n = self.hidden_size
         print(f'm={m}, k={k}, n={n}')
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-                deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
          
@@ -309,13 +313,15 @@ class DeepSeekMLP(torch.nn.Module):
         k = self.hidden_size #7168
         n = self.expert_dim * 2   #不开TP
         print(f'm={m}, k={k}, n={n}')
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-                x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-                deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
@@ -323,13 +329,15 @@ class DeepSeekMLP(torch.nn.Module):
         k = self.expert_dim  #不开TP
         n = self.hidden_size
         print(f'm={m}, k={k}, n={n}')
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-                x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-                deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
 
@@ -352,14 +360,15 @@ class DeepSeekMOE(torch.nn.Module):
         self.hidden_size = args.hidden_size
         self.expert_dim = args.expert_dim
         self.num_experts = args.router_expert
-        self.ep = args.expert_model_parallel_size
         self.tp = args.tensor_model_parallel_size
+        self.dp = args.world_size // self.tp // args.pipeline_model_parallel
+        self.ep = self.tp * self.dp
         self.topk = args.moe_router_topk
         self.seq_length = args.seq_length
         self.args = args
     
     def _up_gate(self, m):
-        num_groups = self.num_experts // (self.ep // self.tp)
+        num_groups = self.num_experts // self.ep
         expected_m_per_group = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
@@ -368,34 +377,17 @@ class DeepSeekMOE(torch.nn.Module):
         k = self.hidden_size
 
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
-
-        def test_func_decode():
-            x_fp8, y_fp8, out, ref_out = construct_masked_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            masked_m = torch.ones(
-                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.7, 1.3))
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                x_fp8, y_fp8, out, masked_m, expected_m_per_group
-            )
-        def test_func_prefill():
-            m, x_fp8, y_fp8, m_indices, out, ref_out = construct_contiguous_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
-                x_fp8, y_fp8, out, m_indices
-            )
         
         if phase == InferencePhase.DECODE.value:
-            test_func = test_func_decode
+            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = test_func_prefill
+            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
         return t
     
     def _down(self, m):
-        num_groups = self.num_experts // (self.ep // self.tp)
+        num_groups = self.num_experts // self.ep
         expected_m_per_group = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
@@ -404,28 +396,11 @@ class DeepSeekMOE(torch.nn.Module):
         k = self.expert_dim
 
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
-
-        def test_func_decode():
-            x_fp8, y_fp8, out, ref_out = construct_masked_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            masked_m = torch.ones(
-                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.7, 1.3))
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                x_fp8, y_fp8, out, masked_m, expected_m_per_group
-            )
-        def test_func_prefill():
-            m, x_fp8, y_fp8, m_indices, out, ref_out = construct_contiguous_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
-                x_fp8, y_fp8, out, m_indices
-            )
         
         if phase == InferencePhase.DECODE.value:
-            test_func = test_func_decode
+            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = test_func_prefill
+            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
         return t

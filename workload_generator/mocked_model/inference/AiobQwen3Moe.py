@@ -4,9 +4,7 @@ from workload_generator.mocked_model.MockedModel import InferencePhase
 from utils.utils import *
 from utils.deepgemm_utils import *
 import torch.nn.functional as F
-import deep_gemm
 import random
-from deep_gemm import bench_kineto, ceil_div, get_col_major_tma_aligned_tensor, calc_diff
 from typing import Optional, Union, Tuple
 # import triton
 import numpy as np
@@ -88,13 +86,15 @@ class Qwen3MoeAttention(torch.nn.Module):
         else:
             n = self.args.hidden_size
             k = self.args.num_attention_heads  * self.args.head_dim // self.tp
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
-        deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
+        # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+        deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         diff = calc_diff(out, ref_out)
         assert diff < 0.001, f'{m=}, {k=}, {n=}, {diff:.5f}'
-        x_fp8, y_fp8, out, ref_out = construct(m, k, n)
+        x_fp8, y_fp8, c, out, ref_out = construct(m, k, n)
         def test_func():
-            deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            # deep_gemm.gemm_fp8_fp8_bf16_nt(x_fp8, y_fp8, out)
+            deep_gemm.fp8_gemm_nt(x_fp8, y_fp8, out, c=c, disable_ue8m0_cast=True, recipe = None)
         t = bench_kineto(test_func, 'fp8_gemm', suppress_kineto_output=True)
         return t
     def _qk_norm(self, q_or_k, m):
@@ -254,8 +254,9 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
         self.args = args
         self.hidden_size = args.hidden_size
         self.num_experts = args.num_experts
-        self.ep = args.expert_model_parallel_size
         self.tp = args.tensor_model_parallel_size
+        self.dp = args.world_size // self.tp // args.pipeline_model_parallel
+        self.ep = self.tp * self.dp
         self.topk = args.num_experts_per_tok
     
     def _route_gate(self, m):
@@ -297,7 +298,7 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
         return t
 
     def _moe_gate_proj(self, up_or_down, m):
-        num_groups = self.num_experts // (self.ep // self.tp)
+        num_groups = self.num_experts // self.ep
         expected_m_per_group = get_ep_expected_m_per_group(
             m, num_groups, self.topk
         )
@@ -309,28 +310,11 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
             k = self.args.moe_intermediate_size
 
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
-
-        def test_func_decode():
-            x_fp8, y_fp8, out, ref_out = construct_masked_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            masked_m = torch.ones(
-                (num_groups,), device='cuda:0', dtype=torch.int) * int(expected_m_per_group * random.uniform(0.7, 1.3))
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                x_fp8, y_fp8, out, masked_m, expected_m_per_group
-            )
-        def test_func_prefill():
-            m, x_fp8, y_fp8, m_indices, out, ref_out = construct_contiguous_grouped(
-                num_groups, expected_m_per_group, k, n
-            )
-            deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
-                x_fp8, y_fp8, out, m_indices
-            )
         
         if phase == InferencePhase.DECODE.value:
-            test_func = test_func_decode
+            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = test_func_prefill
+            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
         t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
         
         return t
@@ -338,7 +322,7 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
     def _moe_act(self, m):
         # SiluAndMul
         num_groups=self.num_experts // self.ep
-        total = m * (self.args.world_size // self.tp) * self.topk // self.num_experts
+        total = m * self.dp * self.topk // self.num_experts
         n = 2 * self.args.moe_intermediate_size
 
         total_max = total # TODO: maybe should set in config
