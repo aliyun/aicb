@@ -1,5 +1,5 @@
 # Base image: Official NVIDIA PyTorch image with Python 3 and GPU support.
-FROM nvcr.io/nvidia/pytorch:25.03-py3
+FROM nvcr.io/nvidia/pytorch:25.05-py3
 
 # Install git for version control operations and clean up apt cache.
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
