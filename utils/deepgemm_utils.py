@@ -23,7 +23,8 @@ class KernelType(enum.Enum):
 
     def is_nosf(self):
         return self.value == 2
-    
+
+
 class MajorTypeAB(enum.Enum):
     KMajor = 0
     MNMajor = 1
@@ -33,7 +34,9 @@ class MajorTypeAB(enum.Enum):
 
     def is_mn_major(self):
         return self.value == 1
-    
+
+
+# === Common ===
 def generate_normal(
     m: int,
     n: int,
@@ -71,9 +74,10 @@ def generate_normal(
     b_fp8 = b_fp8 if major_b.is_k_major() else (b_fp8[0].T.contiguous().T, b_fp8[1])
     return a_fp8, b_fp8, c, d, ref_d
 
+
 # === Masked ===
 def enumerate_m_grouped_masked() -> Generator:
-    max_m = 4096
+    max_m = 128#4096
     yield KernelType.Kernel1D2D, max_m
 
 def generate_m_grouped_masked(
@@ -117,6 +121,7 @@ def generate_m_grouped_masked(
         b_fp8[0][i], b_fp8[1][i] = per_block_cast_to_fp8(b[i], use_ue8m0=use_ue8m0)
 
     return a_fp8, b_fp8, masked_m, d, ref_d
+
 
 # === Contiguous ===
 def enumerate_m_grouped_contiguous() -> Generator:
@@ -201,3 +206,30 @@ def test_func_contiguous(num_groups, expected_m_per_group, k, n) -> None:
     deep_gemm.m_grouped_fp8_gemm_nt_contiguous(
         a_fp8, b_fp8, d, m_indices, disable_ue8m0_cast=True
     )
+
+def bench_masked(num_groups, expected_m_per_group, k, n) -> float:
+    [(kerneltype, max_m)] = enumerate_m_grouped_masked()
+    a_fp8, b_fp8, masked_m, d, ref_d = generate_m_grouped_masked(
+        num_groups, max_m, expected_m_per_group, n, k
+    )
+    def test_func():
+        deep_gemm.m_grouped_fp8_gemm_nt_masked(
+            a_fp8,
+            b_fp8,
+            d,
+            masked_m,
+            expected_m_per_group,
+            disable_ue8m0_cast=True,
+        )
+    return bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
+
+def bench_contiguous(num_groups, expected_m_per_group, k, n) -> float:
+    [(kerneltype, major_a, major_b)] = enumerate_m_grouped_contiguous()
+    m, a_fp8, b_fp8, m_indices, d, ref_d = generate_m_grouped_contiguous(
+        num_groups, expected_m_per_group, n, k, major_a, major_b
+    )
+    def test_func():
+        deep_gemm.m_grouped_fp8_gemm_nt_contiguous(
+            a_fp8, b_fp8, d, m_indices, disable_ue8m0_cast=True
+        )
+    return bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)

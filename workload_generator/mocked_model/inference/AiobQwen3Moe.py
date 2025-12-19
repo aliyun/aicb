@@ -299,8 +299,9 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
 
     def _moe_gate_proj(self, up_or_down, m):
         num_groups = self.num_experts // self.ep
+        strategy = getattr(self.args, "moe_routing_strategy", Strategy.RoundRobin)
         expected_m_per_group = get_ep_expected_m_per_group(
-            m, num_groups, self.topk
+            m, num_groups, self.topk, self.ep, strategy
         )
         if up_or_down:
             n = 2 * self.args.moe_intermediate_size
@@ -312,10 +313,9 @@ class Qwen3MoeSparseMoeBlock(torch.nn.Module):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
         
         if phase == InferencePhase.DECODE.value:
-            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
+            t = bench_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
-        t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
+            t = bench_contiguous(num_groups, expected_m_per_group, k, n)
         
         return t
 

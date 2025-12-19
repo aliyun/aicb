@@ -891,7 +891,31 @@ def num_parameters_to_bytes(args, params: int) -> str:
         return f"{b/1e6:.2f} MB"
     return f"{gb:.2f} GB"
 
-def get_ep_expected_m_per_group(m, num_groups, topk):
-    expected_m_per_group = m * topk / num_groups
-    # print(expected_m_per_group_init)
-    return max(round(expected_m_per_group), 1)
+class Strategy(str, Enum):
+    RoundRobin = "RoundRobin"
+    UniformRandom = "UniformRandom"
+
+def get_ep_expected_m_per_group(m, num_groups, topk, ep, strategy = "RoundRobin"):
+    if strategy == Strategy.RoundRobin:
+        return max(round(m * topk / num_groups), 1)
+    elif strategy == Strategy.UniformRandom:
+        # Simulate Global distribution to find the busiest RANK (Straggler Rank).
+        global_total_tokens = m * topk * ep
+        global_total_experts = num_groups * ep
+        
+        rng = np.random.default_rng()
+        
+        # 1. Distribute tokens to ALL global experts
+        all_experts_load = rng.multinomial(global_total_tokens, [1.0/global_total_experts]*global_total_experts)
+        
+        # 2. Aggregate loads per Rank
+        # Reshape to (ep, num_groups) and sum across experts within each rank
+        rank_loads = all_experts_load.reshape(ep, num_groups).sum(axis=1)
+            
+        # 3. Find the busiest Rank
+        max_rank_load = rank_loads.max()
+        
+        # 4. Return average load per expert on the busiest rank
+        return int(max_rank_load / num_groups)
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}")

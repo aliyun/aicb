@@ -7,7 +7,7 @@ import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSee
 import workload_generator.mocked_model.inference.MockedQwen3Moe as MockedQwen3Moe
 import workload_generator.mocked_model.inference.MockedQwen3Next as MockedQwen3Next
 from workload_generator.mocked_model.MockedModel import InferencePhase
-from utils.utils import CommType, get_params, get_comp_out, extract_inference_averages
+from utils.utils import CommType, get_params, get_comp_out, extract_inference_averages, Strategy, get_ep_expected_m_per_group
 import os
 from typing import List, Tuple
 from collections import deque
@@ -275,6 +275,7 @@ if __name__ == "__main__":
     # Add arguments that has default value
     parser.add_argument("--aiob_enable", action="store_true", default=False, help="Enable AIOB")
     parser.add_argument("--aiob_forward_loops", type=int, default=1, help="Number of AIOB forward loops")
+    parser.add_argument("--moe_routing_strategy", default=Strategy.RoundRobin.value, choices=[s.value for s in Strategy], help="MoE routing strategy")
     parser.add_argument("--seq_length", type=int, default=1, help="Sequence length")
     parser.add_argument("--micro_batch", type=int, default=1, help="Micro batch size")
     parser.add_argument("--world_size", type=int, default=1, help="World size")

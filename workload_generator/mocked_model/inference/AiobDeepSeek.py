@@ -369,8 +369,9 @@ class DeepSeekMOE(torch.nn.Module):
     
     def _up_gate(self, m):
         num_groups = self.num_experts // self.ep
+        strategy = getattr(self.args, "moe_routing_strategy", Strategy.RoundRobin)
         expected_m_per_group = get_ep_expected_m_per_group(
-            m, num_groups, self.topk
+            m, num_groups, self.topk, self.ep, strategy
         )
 
         n = self.expert_dim * 2
@@ -379,17 +380,17 @@ class DeepSeekMOE(torch.nn.Module):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
         
         if phase == InferencePhase.DECODE.value:
-            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
+            t = bench_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
-        t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
+            t = bench_contiguous(num_groups, expected_m_per_group, k, n)
         
         return t
     
     def _down(self, m):
         num_groups = self.num_experts // self.ep
+        strategy = getattr(self.args, "moe_routing_strategy", Strategy.RoundRobin)
         expected_m_per_group = get_ep_expected_m_per_group(
-            m, num_groups, self.topk
+            m, num_groups, self.topk, self.ep, strategy
         )
 
         n = self.hidden_size
@@ -398,10 +399,9 @@ class DeepSeekMOE(torch.nn.Module):
         phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
         
         if phase == InferencePhase.DECODE.value:
-            test_func = lambda: test_func_masked(num_groups, expected_m_per_group, k, n)
+            t = bench_masked(num_groups, expected_m_per_group, k, n)
         elif phase == InferencePhase.PREFILL.value:
-            test_func = lambda: test_func_contiguous(num_groups, expected_m_per_group, k, n)
-        t = bench_kineto(test_func, "fp8_gemm", suppress_kineto_output=True)
+            t = bench_contiguous(num_groups, expected_m_per_group, k, n)
         
         return t
 
