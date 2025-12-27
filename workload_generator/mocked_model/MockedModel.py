@@ -13,7 +13,11 @@ limitations under the License.
 
 import math
 from typing import List, Tuple
+from enum import Enum
 
+class InferencePhase(Enum):
+    PREFILL = "prefill"
+    DECODE = "decode"
 
 class MockedParam:
     def __init__(self, shape: Tuple, elem_size=2, name=None) -> None:
@@ -74,6 +78,63 @@ def _child_modules(value: object) -> List["MockedModel"]:
         return modules
     else:
         return []
+
+
+class MockedParamsBase:
+    def __init__(self, model_name: str, frame: str, config_file=None, args=None):
+        self.model_name = model_name
+        self.frame = frame
+
+        # Load from config file if provided
+        if config_file:
+            self.load_from_config(config_file)
+        
+        # Override with command line args if provided
+        if args:
+            self.load_from_args(args)
+
+        if self.world_size < self.tensor_model_parallel_size or self.world_size < self.expert_model_parallel_size or self.world_size < 1:
+            raise ValueError(f"Invalid world size: world_size={self.world_size}, tensor_model_parallel_size={self.tensor_model_parallel_size}, expert_model_parallel_size={self.expert_model_parallel_size}")
+
+    def load_from_config(self, config_file):
+        import json
+        try:
+            with open(config_file, 'r') as f:
+                config_data = json.load(f)
+            
+            # Update attributes with values from config file
+            for key, value in config_data.items():
+                setattr(self, key, value)
+                
+        except FileNotFoundError:
+            #error, quit
+            print(f"[ERRPR] Config file '{config_file}' not found.")
+            exit(1)
+        except json.JSONDecodeError:
+            print(f"[ERRPR] File '{config_file}' is not valid JSON.")
+            exit(1)
+
+    def load_from_args(self, args):
+        """Load parameters from command line arguments"""
+        # List of parameters that can be overridden by command line args
+        arg_params = [
+            'aiob_enable',
+            'seq_length',
+            'micro_batch',
+            'world_size',
+            'tensor_model_parallel_size',
+            'expert_model_parallel_size',
+            'pipeline_model_parallel',
+            'moe_enable',
+            'result_dir',
+            'phase',
+            'aiob_forward_loops'
+        ]
+        
+        # Override parameters with values from args if they exist
+        for param in arg_params:
+            if hasattr(args, param):
+                setattr(self, param, getattr(args, param))
 
 
 class MockedModel:

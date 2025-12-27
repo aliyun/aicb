@@ -286,7 +286,10 @@ def get_comp_out(args):
     
 
 def extract_inference_averages(file_path,args):
+    if file_path is None or file_path == "":
+        return {}
     attention_norm_avg_sum = 0.0
+    attention_gdn_avg_sum = 0.0
     attention_avg_sum = 0.0
     mlp_avg_sum = 0.0
     moe_norm_avg_sum = 0.0
@@ -297,40 +300,43 @@ def extract_inference_averages(file_path,args):
     time_gpu_avg_re = re.compile(r"time_gpu_avg:\s+(\d+(\.\d+)?)")
     # time_gpu_min_re = re.compile(r"time_gpu_min:\s+(\d+(\.\d+)?)")
 
-    if args.aiob_enable:
-        with open(file_path, "r") as file:
-            current_section = None
+    with open(file_path, "r") as file:
+        current_section = None
 
-            for line in file:
-                header_match = section_header_re.match(line)
-                if header_match:
-                    current_section = header_match.group(1).strip()
+        for line in file:
+            header_match = section_header_re.match(line)
+            if header_match:
+                current_section = header_match.group(1).strip()
 
-                avg_match = time_gpu_avg_re.search(line)
-                # min_match = time_gpu_min_re.search(line)
-                if avg_match and current_section:
-                    avg_value = float(avg_match.group(1)) * 1000
-                    if "atten_norm" in current_section:
-                        attention_norm_avg_sum += avg_value
-                    elif "atten" in current_section:
-                        attention_avg_sum += avg_value
-                    elif "mlp" in current_section:
-                        mlp_avg_sum += avg_value
-                    elif "moe_norm" in current_section:
-                        moe_norm_avg_sum += avg_value
-                    elif "moe_route" in current_section:
-                        moe_route_avg_sum += avg_value
-                    elif "moe" in current_section:
-                        moe_expert_sum += avg_value
+            avg_match = time_gpu_avg_re.search(line)
+            # min_match = time_gpu_min_re.search(line)
+            if avg_match and current_section:
+                avg_value = float(avg_match.group(1)) * 1000
+                if "atten_norm" in current_section:
+                    attention_norm_avg_sum += avg_value
+                elif "gdn" in current_section:
+                    attention_gdn_avg_sum += avg_value
+                elif "atten" in current_section:
+                    attention_avg_sum += avg_value
+                elif "mlp" in current_section:
+                    mlp_avg_sum += avg_value
+                elif "moe_norm" in current_section:
+                    moe_norm_avg_sum += avg_value
+                elif "moe_route" in current_section:
+                    moe_route_avg_sum += avg_value
+                elif "moe" in current_section:
+                    moe_expert_sum += avg_value
 
-    compute_cache = {
+    full_cache = {
         "attention_norm": round(attention_norm_avg_sum),
+        "attention_gdn": round(attention_gdn_avg_sum),
         "attention_layer": round(attention_avg_sum),
         "mlp": round(mlp_avg_sum),
         "moe_norm": round(moe_norm_avg_sum),
         "moe_route": round(moe_route_avg_sum),
-        "moe_expert":round(moe_expert_sum),
+        "moe_expert": round(moe_expert_sum),
     }
+    compute_cache = {key: value for key, value in full_cache.items() if value != 0}
 
     return compute_cache
 
@@ -339,14 +345,15 @@ def get_compute_path(args):
     result_dir = "./results/aiob_outputs"
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp1-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}.txt"
+    phase = args.phase
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp1-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}-{phase}.txt"
     filepath = os.path.join(result_dir, filename)
     return filepath
 
 def write_time(time_list, args):
     filepath = get_compute_path(args)
     with open(filepath, "w") as file:
-        file.write("inference_term:decode\n")
+        file.write(f"inference_term:{args.phase}\n")
         data_str = json.dumps(time_list, indent=4)
 
         file.write(data_str)
@@ -883,3 +890,32 @@ def num_parameters_to_bytes(args, params: int) -> str:
     if gb < 0:
         return f"{b/1e6:.2f} MB"
     return f"{gb:.2f} GB"
+
+class Strategy(str, Enum):
+    RoundRobin = "RoundRobin"
+    UniformRandom = "UniformRandom"
+
+def get_ep_expected_m_per_group(m, num_groups, topk, ep, strategy = "RoundRobin"):
+    if strategy == Strategy.RoundRobin:
+        return max(round(m * topk / num_groups), 1)
+    elif strategy == Strategy.UniformRandom:
+        # Simulate Global distribution to find the busiest RANK (Straggler Rank).
+        global_total_tokens = m * topk * ep
+        global_total_experts = num_groups * ep
+        
+        rng = np.random.default_rng()
+        
+        # 1. Distribute tokens to ALL global experts
+        all_experts_load = rng.multinomial(global_total_tokens, [1.0/global_total_experts]*global_total_experts)
+        
+        # 2. Aggregate loads per Rank
+        # Reshape to (ep, num_groups) and sum across experts within each rank
+        rank_loads = all_experts_load.reshape(ep, num_groups).sum(axis=1)
+            
+        # 3. Find the busiest Rank
+        max_rank_load = rank_loads.max()
+        
+        # 4. Return average load per expert on the busiest rank
+        return int(max_rank_load / num_groups)
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}")

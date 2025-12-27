@@ -2,10 +2,12 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSeek
 import workload_generator.mocked_model.MockedModel
-import workload_generator.mocked_model.inference.MockedQwen3 as MockedQwen3
-from utils.utils import CommType, get_params, get_comp_out, extract_inference_averages
+import workload_generator.mocked_model.inference.MockedDeepSeek as MockedDeepSeek
+import workload_generator.mocked_model.inference.MockedQwen3Moe as MockedQwen3Moe
+import workload_generator.mocked_model.inference.MockedQwen3Next as MockedQwen3Next
+from workload_generator.mocked_model.MockedModel import InferencePhase
+from utils.utils import CommType, get_params, get_comp_out, extract_inference_averages, Strategy, get_ep_expected_m_per_group
 import os
 from typing import List, Tuple
 from collections import deque
@@ -61,6 +63,37 @@ class LayerInfo:
     def __init__(self, layer_id, layer_name):
         self.layer_id = layer_id
         self.layer_name = layer_name
+def _get_model_details(model):
+    layers = []
+    visited = set()
+
+    def traverse_model(model, child_id=0):
+        if id(model) in visited:
+            return
+        visited.add(id(model))
+        if (
+                isinstance(model, MockedDeepSeek.DeepSeekAttention)
+                or isinstance(model, MockedDeepSeek.DeepSeekMLP)
+                # or isinstance(model, MockedDeepSeek.DeepSeekMOE)
+                # or isinstance(model, MockedDeepSeek.DeepSeekColumnLinear)
+                # or isinstance(model, MockedDeepSeek.DeepSeekRowLinear)
+                or isinstance(model, MockedQwen3Moe.Qwen3MoeRMSNorm)
+                or isinstance(model, MockedQwen3Moe.Qwen3MoeAttention)
+                or isinstance(model, MockedQwen3Moe.Qwen3MoeRoute)
+                or isinstance(model, MockedQwen3Moe.Qwen3MoeExpert)
+                or isinstance(model, MockedQwen3Next.Qwen3NextRMSNorm)
+                or isinstance(model, MockedQwen3Next.Qwen3NextAttention)
+                or isinstance(model, MockedQwen3Next.Qwen3NextGatedDeltaNet)
+                or isinstance(model, MockedQwen3Next.Qwen3NextRoute)
+                or isinstance(model, MockedQwen3Next.Qwen3NextExpert)
+            ):
+                layers.append(LayerInfo(model.layer_id, model.name))
+        for child in model.child_modules():
+            traverse_model(child, child_id+1)
+
+    traverse_model(model)
+
+    return layers
 
 class SimAIWorkload():
     def __init__(self, model, args, compue_cache=None):
@@ -71,56 +104,40 @@ class SimAIWorkload():
         self.seq_len = args.seq_length
         self.tp = args.tensor_model_parallel_size
         self.mbs = args.micro_batch
+        self.batch_size = args.micro_batch  # 添加缺失的 batch_size 属性
         if args.moe_enable:
             self.expert_model_parallel_size = args.expert_model_parallel_size
             self.num_experts = args.num_experts
             #如果有moe_router_topk则用，否则用num_experts_per_tok
             self.topk = args.moe_router_topk if hasattr(args,"moe_router_topk") else args.num_experts_per_tok
 
-    def get_model_details(self):
-        layers = []
-        visited = set()
-
-        def traverse_model(model, child_id=0):
-            if id(model) in visited:
-                return
-            visited.add(id(model))
-            if (
-                    isinstance(model, MockedDeepSeek.DeepSeekAttention)
-                    or isinstance(model, MockedDeepSeek.DeepSeekMLP)
-                    # or isinstance(model, MockedDeepSeek.DeepSeekMOE)
-                    # or isinstance(model, MockedDeepSeek.DeepSeekColumnLinear)
-                    # or isinstance(model, MockedDeepSeek.DeepSeekRowLinear)
-                    or isinstance(model, MockedQwen3.Qwen3MoeRMSNorm)
-                    or isinstance(model, MockedQwen3.Qwen3MoeAttention)
-                    or isinstance(model, MockedQwen3.Qwen3MoeRoute)
-                    or isinstance(model, MockedQwen3.Qwen3MoeExpert)
-                ):
-                    layers.append(LayerInfo(model.layer_id, model.name))
-            for child in model.child_modules():
-                traverse_model(child, child_id+1)
-
-        traverse_model(model)
-
-        return layers
     
+    def get_comm_size(self):
+        phase = getattr(self.args, "phase", InferencePhase.DECODE.value)
+        if phase == InferencePhase.DECODE.value:
+            m = self.batch_size
+        elif phase == InferencePhase.PREFILL.value:
+            m = self.args.seq_length
+        tp_comm_size = 2 * m * self.args.hidden_size
+        ep_combine_size = tp_comm_size * self.topk // self.tp
+        ep_dispatch_size = ep_combine_size
+
+        if any(s in self.args.frame for s in ('DeepSeek', 'Qwen3')): 
+            # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
+            ep_dispatch_size = int(ep_dispatch_size * MockedDeepSeek.FP8_FACTOR)
+
+        return tp_comm_size, ep_dispatch_size, ep_combine_size
+        
+
     def workload_generate_aiob(self):
         default_compute_time = 1
         compute_time = 0
-        tp_comm_size = 2 * self.mbs * self.seq_len * self.args.hidden_size
-        layers = self.get_model_details()
+        tp_comm_size, ep_dispatch_size, ep_combine_size = self.get_comm_size()
+        layers = _get_model_details(self.model)
         print("layer length:" , len(layers))
 
         for layer in layers:
             name = layer.layer_name
-            forward_comm = "NONE"
-            forward_comm_size = tp_comm_size
-            ep_dispatch_size = tp_comm_size * self.topk // self.tp
-            ep_combine_size = tp_comm_size * self.topk // self.tp
-            if self.args.frame == "DeepSeek" or self.args.frame == "Qwen3-Moe":
-                # for DeepEP based on https://github.com/parthpower/DeepEP/commit/50aee15f592bc22142eb04b7d718296b19613ae9
-                ep_dispatch_size = int(ep_dispatch_size * MockedDeepSeek.FP8_FACTOR)
-
             if args.tensor_model_parallel_size == 1 :
                 forward_comm = "NONE"
             else:
@@ -153,7 +170,7 @@ class SimAIWorkload():
                         name=name,
                         forward_compute_time=compute_time,
                         forward_comm=forward_comm,
-                        forward_comm_size=forward_comm_size,
+                        forward_comm_size=tp_comm_size,
                         backward_compute_time=0,
                         backward_comm="NONE",
                         backward_comm_size=0,
@@ -247,40 +264,63 @@ class SimAIWorkload():
 
 if __name__ == "__main__":
     import sys
+    import argparse
+    from utils.utils import get_params
     
-    # args = get_params()
-    # print(args)
-    # Check if a config file is provided as a command line argument
-    config_file = None
-    if len(sys.argv) > 1:
-        model_name = sys.argv[1]
-    else:
-        print("Usage: python workload_generator.py <model_name> [config_file]")
-        sys.exit(1)
-    if len(sys.argv) > 2:
-        config_file = sys.argv[2]
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Generate inference workload for AI models")
+    parser.add_argument("model_name", help="Model name (e.g., DeepSeek-671B, Qwen3-Moe-235B, Qwen3-Next-80B)")
+    parser.add_argument("config_file", nargs="?", help="Path to JSON config file")
+    
+    # Add arguments that has default value
+    parser.add_argument("--aiob_enable", action="store_true", default=False, help="Enable AIOB")
+    parser.add_argument("--aiob_forward_loops", type=int, default=1, help="Number of AIOB forward loops")
+    parser.add_argument("--moe_routing_strategy", default=Strategy.RoundRobin.value, choices=[s.value for s in Strategy], help="MoE routing strategy")
+    parser.add_argument("--seq_length", type=int, default=1, help="Sequence length")
+    parser.add_argument("--micro_batch", type=int, default=1, help="Micro batch size")
+    parser.add_argument("--world_size", type=int, default=1, help="World size")
+    parser.add_argument("--tensor_model_parallel_size", default=1, type=int, help="Tensor model parallel size")
+    parser.add_argument("--expert_model_parallel_size", default=1, type=int, help="Expert model parallel size")
+    parser.add_argument("--pipeline_model_parallel", default=1, type=int, help="Pipeline model parallel size")
+    parser.add_argument("--moe_enable", default=True, action="store_true", help="Enable MoE")
+    parser.add_argument("--result_dir", default="results/workload/", help="Result directory")
+    parser.add_argument("--phase",
+                        choices=[InferencePhase.DECODE.value, InferencePhase.PREFILL.value],
+                        default=InferencePhase.DECODE.value, help="Inference phase")
+    
+    args = parser.parse_args()
+    
+    model_name = args.model_name
+    config_file = args.config_file
     
     if "Qwen3-Moe" in model_name:
-        args = MockedQwen3.Qwen3MoeParams(config_file)
-        model = MockedQwen3.Qwen3MoeModel(args)
+        args = MockedQwen3Moe.Qwen3MoeParams(config_file, args)
+        model = MockedQwen3Moe.Qwen3MoeModel(args)
+    elif "Qwen3-Next" in model_name:
+        args = MockedQwen3Next.Qwen3NextParams(config_file, args)
+        model = MockedQwen3Next.Qwen3NextModel(args)
     elif "DeepSeek" in model_name:
-        args = MockedDeepSeek.DeepSeekParams(config_file)
+        args = MockedDeepSeek.DeepSeekParams(config_file, args)
         model = MockedDeepSeek.DeepSeekModel(args)
     else:
         print(f"Invalid model name: {model_name}")
         sys.exit(1)
     # args = MockedDeepSeek.DeepSeekParams(config_file)
     # model = MockedDeepSeek.DeepSeekModel(args)
-
+    phase = getattr(args, "phase", InferencePhase.DECODE.value)
     result_dir = args.result_dir
     if not os.path.isdir(result_dir):
         os.makedirs(result_dir)
-    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-bs{args.micro_batch}-seq{args.seq_length}"
+    filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-bs{args.micro_batch}-seq{args.seq_length}-{phase}"
     
     if args.aiob_enable:
         if "Qwen3-Moe" in model_name:
-            import workload_generator.mocked_model.inference.AiobQwen3 as AiobQwen3
-            aiob_model = AiobQwen3.Qwen3MoeModel(args)
+            import workload_generator.mocked_model.inference.AiobQwen3Moe as AiobQwen3Moe
+            aiob_model = AiobQwen3Moe.Qwen3MoeModel(args)
+            aiob_output_filepath = aiob_model()
+        elif "Qwen3-Next" in model_name:
+            import workload_generator.mocked_model.inference.AiobQwen3Next as AiobQwen3Next
+            aiob_model = AiobQwen3Next.Qwen3NextModel(args)
             aiob_output_filepath = aiob_model()
         elif "DeepSeek" in model_name:
             import workload_generator.mocked_model.inference.AiobDeepSeek as AiobDeepSeek
@@ -292,7 +332,7 @@ if __name__ == "__main__":
 
     else:
         aiob_dir = "results/aiob_outputs"
-        aiob_output_filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}.txt"
+        aiob_output_filename = f"{args.model_name}-world_size{args.world_size}-tp{args.tensor_model_parallel_size}-pp{args.pipeline_model_parallel}-ep{args.expert_model_parallel_size}-bpg{args.micro_batch}-seq{args.seq_length}-{phase}.txt"
         aiob_output_filepath = os.path.join(aiob_dir,aiob_output_filename)
         if not os.path.exists(aiob_output_filepath):
             print(f"aiob not enabled, and {aiob_output_filepath} not found. Using default compute time.")

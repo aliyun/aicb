@@ -1,5 +1,5 @@
 from utils.utils import divide, CommType, CommGroup
-from workload_generator.mocked_model.MockedModel import MockedModel, Linear, MockedParam
+from workload_generator.mocked_model.MockedModel import MockedModel, Linear, MockedParam, MockedParamsBase
 from log_analyzer.log import Workload, LogItem
 
 # multiplier to convert BF16 to (FP8 + FP32 scale)
@@ -546,75 +546,18 @@ class DeepSeekModel(MockedModel):
         return workloads
 
 
-class DeepSeekParams():
-    def __init__(self, config_file=None):
-        # Default values
-        self.aiob_enable: bool = True
-        self.model_name: str = "DeepSeek-671B"
-        self.frame: str = "DeepSeek"
-
-        # Model Params：
-        self.num_layers: int = 61
-        self.dense_layer: int = 3
-        self.hidden_size: int = 7168
-
-        # Input Params：
-        self.seq_length: int = 1  # decode
-        self.vocab_size: int = 129280
-        self.micro_batch: int = 64  # for example
-        self.world_size: int = 32  # Total 32 gpus
-        self.tensor_model_parallel_size: int = 8
-        self.expert_model_parallel_size: int = 32
-        self.pipeline_model_parallel: int = 1
-
-        # MLA Params
-        self.d_kv_c: int = 512      # kv_compression_dim
-        self.d_q_c: int = 1536      # q_compression_dim
-        self.d_r: int = 64          # Rope dim
-        self.head_num: int = 128    # head_num
-        self.d_q: int = 128         # q_head_dim
-        self.d_kv: int = 128        # kv_head_dim
-
-        # MOE Params
-        self.moe_enable = True
-        self.router_expert: int = 256
-        self.duped_expert: int = 32
-        self.shared_experts: int = 1
-        self.moe_router_topk: int = 8
-        self.expert_dim: int = 2048
-        self.num_experts = self.router_expert + self.duped_expert
-
-        self.num_attention_heads=128
+class DeepSeekParams(MockedParamsBase):
+    def __init__(self, config_file=None, args=None):
+        # Initialize base class with default values
+        super().__init__("DeepSeek-671B", "DeepSeek", config_file, args)
 
         # Enable computation_enable
         self.computation_enable = True
         self.add_bias_linear = False
 
-        self.result_dir = "results/workload/"
-
-        # Load from config file if provided
-        if config_file:
-            self.load_from_config(config_file)
-
-    def load_from_config(self, config_file):
-        import json
-        try:
-            with open(config_file, 'r') as f:
-                config_data = json.load(f)
-            
-            # Update attributes with values from config file
-            for key, value in config_data.items():
-                if hasattr(self, key):
-                    setattr(self, key, value)
-            
-            # Recalculate total_experts if needed
-            if 'router_expert' in config_data or 'duped_expert' in config_data:
-                self.total_experts = self.router_expert + self.duped_expert
-                
-        except FileNotFoundError:
-            print(f"Config file {config_file} not found. Using default values.")
-        except json.JSONDecodeError:
-            print(f"Error decoding JSON from {config_file}. Using default values.")
+        # Recalculate total_experts if needed
+        if hasattr(self, 'router_expert') or hasattr(self, 'duped_expert'):
+            self.num_experts = self.router_expert + self.duped_expert
 
 
 if __name__ == "__main__":
