@@ -100,7 +100,7 @@ class MegatronRowLinear(MockedModel):
                         comm_group=CommGroup.tp_group,
                         comm_group_size=self.tensor_model_parallel_size,
                         msg_size=self.comm_size,
-                        stage="backward.MegatronRowLinear",
+                        stage="backward.MegatronRowLinear.",
                     )
                 )
         # grad_input = grad_output.matmul(weight): (s, b, h)*(h, h'/N)
@@ -113,7 +113,7 @@ class MegatronRowLinear(MockedModel):
                         (self.seq_len, self.batch_size, self.output_size),
                         self.weight.shape,
                     ),
-                    stage="backward.MegatronRowLinear" + self.name,
+                    stage="backward.MegatronRowLinear." + self.name,
                 )
             )
             workloads.append(
@@ -123,7 +123,7 @@ class MegatronRowLinear(MockedModel):
                         (self.output_size, self.seq_len * self.batch_size),
                         (self.seq_len * self.batch_size, self.input_size_per_partition),
                     ),
-                    stage="backward.MegatronRowLinear" + self.name,
+                    stage="backward.MegatronRowLinear." + self.name,
                 )
             )
         return workloads
