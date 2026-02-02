@@ -280,6 +280,9 @@ def get_comp_out(args):
             device=device,
             dtype=torch.int64,
         )
+        # Warm-up the GPU
+        for _ in range(10):
+             _ = measure_model(masked_input)
         filepath = measure_model(masked_input)
         return filepath
 
