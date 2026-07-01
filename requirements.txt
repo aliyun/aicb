@@ -8,7 +8,7 @@ fastapi==0.119.0
 openai==2.3.0
 py-cpuinfo>=9.0.0
 einops
-vllm==0.11.0
+vllm==0.24.0
 
 # Dependencies installed from Git repositories
 git+https://github.com/fanshiqing/grouped_gemm@v1.0
