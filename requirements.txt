@@ -1,7 +1,7 @@
 # requirements.txt
 
 # Core dependencies from PyPI
-transformers==4.57.1
+transformers==5.3.0
 msgspec>=0.19.0
 blake3>=1.0.4
 fastapi==0.119.0
